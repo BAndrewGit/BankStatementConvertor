@@ -1,16 +1,16 @@
 # Bank Statement Processor (Procesare Extras Cont)
 
-This application helps you automatically process bank statements (PDFs) into clear, organized reports. It takes a raw bank PDF and gives you clean data + budget insights.
+This application processes BT bank statements (PDF) into cleaned transactions, category distributions, and a model-ready feature dataset.
 
 ## What It Does for You
 
 Instead of manually copying transactions into Excel, this tool automatically:
 
-1.  **Reads your PDF bank statement**.
-2.  **Cleans up descriptions** (e.g., turns "COST COFFEE S.R.L - POS 123" into "COST COFFEE").
-3.  **Identifies the merchant** and looks up their official business activity (CAEN code) to know if they sell food, gas, or IT services.
-4.  **Categorizes expenses** automatically (Food, Transport, Utilities, etc.).
-5.  **Creates a monthly summary** showing exactly how much you spent vs. earned in each category.
+1.  **Extracts transactions from PDF text** (no OCR).
+2.  **Classifies transaction type** (card purchase, fee, transfer, ATM, blocked, unknown).
+3.  **Extracts and normalizes merchants** deterministically.
+4.  **Maps merchants to expense areas** (Food, Housing, Transport, etc.).
+5.  **Builds final model input features** and a run quality report.
 
 ## How to Use It (Very Simple)
 
@@ -26,10 +26,9 @@ That's it! The app will process everything and save several Excel-friendly CSV f
 
 In your output folder, look for these important files:
 
--   **`monthly_budget_categories.csv`** → **Best for analysis!** Shows total spending per month for Food, Transport, etc.
--   **`monthly_budget_overview.csv`** → Simple high-level summary (Income vs. Expenses per month).
--   **`transactions_budget_categorized.csv`** → Every single transaction with its assigned category and merchant details.
--   **`pipeline_quality_report.csv`** → Tells you if any PDF lines couldn't be read clearly.
+-   **`final_dataset.csv`** -> One-row feature vector with the exact model columns.
+-   **`transactions_classified.csv`** -> Cleaned and classified transaction-level output.
+-   **`run_report.json`** -> Run summary (counts, unknowns, latency) + quality metrics.
 
 ---
 
@@ -52,16 +51,61 @@ python main.py
 ### Project Structure
 
 -   `main.py` - The GUI entry point.
--   `pdf_pipeline/` - Core logic modules (extraction, normalization, enrichment).
--   `pdf_pipeline/project_pipeline.py` - Main orchestrator connecting all steps.
+-   `src/` - Core processing modules (ingestion, classification, features, pipelines).
 -   `tests/` - Automated tests to ensure accuracy.
 
-### External Data
+### Active Flow
 
-The app uses generic open datasets for merchant lookups in the `DatasetsCAEN/` folder. If these files are missing, the detailed merchant lookup step will simply be skipped or produce warnings.
+Single flow used in production:
+
+1. `main.py` opens file/folder selectors.
+2. `src/pipelines/run_end_to_end.py` orchestrates parse -> classify -> map -> feature build.
+3. Results are written in the selected output folder.
 
 ### Running Tests
 
 ```powershell
 python -m unittest discover -s tests -p "test_*.py"
 ```
+
+### ONRC + CAEN Company Lookup
+
+Dataset-first lookup for company enrichment (with optional Termene fallback) is available via:
+
+```powershell
+python run_company_lookup.py "AUCHAN"
+```
+
+Pipeline used:
+
+1. Search company in `DatasetsCAEN/od_firme.csv`.
+2. Extract `CUI` and `COD_INMATRICULARE`.
+3. Join authorized CAEN from `DatasetsCAEN/od_caen_autorizat.csv`.
+4. Join CAEN nomenclature from `DatasetsCAEN/n_caen.csv`.
+5. Map CAEN to industry with explicit overrides (`5610`, `6201`, `4711`).
+6. If ONRC match misses, fallback to Termene API when Termene credentials are configured.
+
+Termene setup (optional, fallback only):
+
+`.env` example:
+
+```text
+TERMENE_API_URL=https://api.termene.ro/v2
+TERMENE_USERNAME=your_username
+TERMENE_PASSWORD=your_password
+TERMENE_SCHEMA_KEY=your_schema_key
+TERMENE_ENABLE_FALLBACK=1
+```
+
+Or in Windows environment variables:
+
+```powershell
+setx TERMENE_API_URL "https://api.termene.ro/v2"
+setx TERMENE_USERNAME "YOUR_TERMENE_USERNAME"
+setx TERMENE_PASSWORD "YOUR_TERMENE_PASSWORD"
+setx TERMENE_SCHEMA_KEY "YOUR_TERMENE_SCHEMA_KEY"
+setx TERMENE_ENABLE_FALLBACK "1"
+```
+
+Important: the normal flow is dataset-first (`od_firme.csv`) and API calls are attempted only when local matching fails.
+

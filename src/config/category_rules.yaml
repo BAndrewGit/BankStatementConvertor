@@ -1,0 +1,30 @@
+merchant_categories:
+  eMAG: Other
+  Altex: Other
+  Pranzo by ESS: Food
+  Mega Image: Food
+  Carrefour: Food
+  Auchan: Food
+  Froo: Food
+  Taco Bell: Food
+  JKC Restaurants: Food
+  PPC Energie: Housing
+  Orange Yoxo: Housing
+  Digi: Housing
+  Spotify: Entertainment
+  Movieplex: Entertainment
+  Metrorex: Transport
+  DM Drogerie Markt: Personal_Care
+  Farmacia: Health
+
+regex_rules:
+  - pattern: "^FARMACIA\\b"
+    category_area: Health
+  - pattern: "^ORANGE\\b"
+    category_area: Housing
+
+fallback_by_txn_type:
+  card_purchase: Other
+  subscription: Entertainment
+  utility_payment: Housing
+

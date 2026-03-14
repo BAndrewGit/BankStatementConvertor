@@ -1,0 +1,97 @@
+PRANZOBYESS:
+  canonical: "Pranzo by ESS"
+  aliases:
+    - "PRANZOBYESS"
+    - "PRANZOBYESS@FBP C1"
+    - "PRANZOBYESS@FBP C2"
+    - "PRANZOBYESS@FBP C3"
+
+MEGAIMAGE:
+  canonical: "Mega Image"
+  aliases:
+    - "MEGA IMAGE SRL"
+    - "MEGAIMAGE"
+    - "MEGAIMAGE 0156 MOGHIOR"
+    - "MEGAIMAGE 0290"
+
+PAYU_EMAG:
+  canonical: "eMAG"
+  aliases:
+    - "PAYU*EMAG"
+    - "PAYU*EMAG.RO"
+    - "PAYU*EMAG.RO/MARKET"
+
+PAYU_ALTEX:
+  canonical: "Altex"
+  aliases:
+    - "PAYU*ALTEX.RO"
+
+PPC_ENERGIE:
+  canonical: "PPC Energie"
+  aliases:
+    - "PPC ENERGIE SA"
+
+METROREX:
+  canonical: "Metrorex"
+  aliases:
+    - "METROREX VALIDATOARE"
+
+CARREFOUR:
+  canonical: "Carrefour"
+  aliases:
+    - "CARREFOUR"
+    - "CARREFOUR MK"
+    - "CARREFOUR MARKET"
+
+AUCHAN:
+  canonical: "Auchan"
+  aliases:
+    - "AUCHAN"
+    - "AUCHAN ROMANIA SA"
+
+FROO:
+  canonical: "Froo"
+  aliases:
+    - "FROO"
+
+TACO_BELL:
+  canonical: "Taco Bell"
+  aliases:
+    - "TACO BELL"
+    - "TACO BELL KIOSK"
+
+JKC_RESTAURANTS:
+  canonical: "JKC Restaurants"
+  aliases:
+    - "JKC RESTAURANTS"
+    - "JKC RESTAURANTS ROMANIA"
+
+DM_DROGERIE:
+  canonical: "DM Drogerie Markt"
+  aliases:
+    - "DM DROGERIE MARKT"
+    - "DM DROGERIE MARKT SRL"
+
+MOVIEPLEX:
+  canonical: "Movieplex"
+  aliases:
+    - "MOVIEPLEX"
+    - "MOVIEPLEX CASA BILET"
+
+ORANGE_YOXO:
+  canonical: "Orange Yoxo"
+  aliases:
+    - "ORANGE YOXO"
+    - "WWW.ORANGE.RO/YOXO"
+
+DIGI:
+  canonical: "Digi"
+  aliases:
+    - "DIGI"
+    - "DIGI RO"
+
+FARMACIA:
+  canonical: "Farmacia"
+  aliases:
+    - "FARMACIA"
+
