@@ -52,49 +52,37 @@ class MerchantNormalizer:
 
     def _dataset_name_to_brand(self, dataset_name: str, normalized_raw: str) -> str:
         normalized_dataset = self._canonicalize(dataset_name)
-        candidates = f"{normalized_dataset} {normalized_raw}"
+        candidate_text = f"{normalized_dataset} {normalized_raw}"
 
-        if "AUCHAN" in candidates or " AUCH " in f" {candidates} ":
-            return "Auchan"
-        if "CARREFOUR" in candidates:
-            return "Carrefour"
-        if "MEGAIMAGE" in candidates or "MEGA IMAGE" in candidates:
-            return "Mega Image"
-        if "PRANZO" in candidates or "PRANZZO" in candidates:
-            return "Pranzo by ESS"
-        if "PAYU*EMAG" in candidates or " EMAG " in f" {candidates} ":
-            return "eMAG"
-        if "PAYU*ALTEX" in candidates or " ALTEX " in f" {candidates} ":
-            return "Altex"
-        if "METROREX" in candidates:
-            return "Metrorex"
-        if "TACO BELL" in candidates:
-            return "Taco Bell"
-        if "MOVIEPLEX" in candidates:
-            return "Movieplex"
-        if "DM DROGERIE" in candidates:
-            return "DM Drogerie Markt"
-        if "PPC ENERGIE" in candidates:
-            return "PPC Energie"
-        if "FROO" in candidates:
-            return "Froo"
-        if "DIGI" in candidates:
-            return "Digi"
-        if "ORANGE" in candidates and "YOXO" in candidates:
-            return "Orange Yoxo"
-        if "JKC RESTAURANTS" in candidates:
-            return "JKC Restaurants"
-        if "FARMACIA" in candidates:
-            return "Farmacia"
+        # Prefer canonical names configured in merchant_aliases.yaml.
+        alias_match = self._contains_alias_match(candidate_text)
+        if alias_match:
+            return alias_match
+
+        exact_match = self._exact_aliases.get(normalized_dataset)
+        if exact_match:
+            return exact_match
+
+        # Generic fallback when aliases/bootstrap do not define a brand: strip legal suffixes/noise.
+        legal_noise = {
+            "SA",
+            "SRL",
+            "SRL.",
+            "S.A",
+            "S.R.L",
+            "ROMANIA",
+            "THE",
+            "COMPANY",
+        }
+        tokens = [token for token in normalized_dataset.split() if token not in legal_noise]
+        if tokens:
+            candidate_tokens = tokens[: min(2, len(tokens))]
+            candidate = " ".join(candidate_tokens)
+            if candidate:
+                return " ".join(word.capitalize() for word in candidate.split())
 
         return dataset_name
 
-    def _contains_keyword(self, text: str, keyword: str) -> bool:
-        if len(keyword) <= 4:
-            pattern = rf"(?<![A-Z0-9]){re.escape(keyword)}[A-Z0-9]*(?![A-Z0-9])"
-        else:
-            pattern = rf"(?<![A-Z0-9]){re.escape(keyword)}(?![A-Z0-9])"
-        return bool(re.search(pattern, text))
 
     def _prefer_alias_for_raw_pattern(self, normalized_raw: str) -> bool:
         # Processor-based merchants are better handled by alias map than ONRC fuzzy company names.

@@ -23,6 +23,7 @@ class TransactionType(str, Enum):
     CASH_WITHDRAWAL = "cash_withdrawal"
     INTERNAL_TRANSFER = "internal_transfer"
     EXTERNAL_TRANSFER = "external_transfer"
+    SALARY_INCOME = "salary_income"
     BANK_FEE = "bank_fee"
     SUBSCRIPTION = "subscription"
     UTILITY_PAYMENT = "utility_payment"

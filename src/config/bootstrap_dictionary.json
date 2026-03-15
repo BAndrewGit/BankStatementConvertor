@@ -1,0 +1,124 @@
+{
+  "housing": {
+    "exact_terms": [
+      "chirie",
+      "rent",
+      "lease",
+      "landlord",
+      "intretinere",
+      "maintenance",
+      "asociatia proprietarilor",
+      "asociatie proprietari",
+      "owners association",
+      "property management",
+      "building maintenance",
+      "apartment maintenance",
+      "apartament",
+      "apartment"
+    ],
+    "recipient_terms": [
+      "asociatia proprietarilor",
+      "asociatie proprietari",
+      "owners association",
+      "property management",
+      "landlord"
+    ],
+    "merchant_terms": [
+      "ppc energie",
+      "enel",
+      "engie",
+      "electrica",
+      "apa nova",
+      "digi",
+      "orange",
+      "vodafone",
+      "telekom",
+      "yoxo"
+    ],
+    "transfer_terms": [
+      "chirie",
+      "rent",
+      "lease",
+      "intretinere",
+      "maintenance",
+      "apartament",
+      "apartment",
+      "asociatie",
+      "association",
+      "landlord"
+    ],
+    "negative_terms": [
+      "refund",
+      "return",
+      "reversal",
+      "chargeback"
+    ],
+    "fuzzy_enabled": true,
+    "min_fuzzy_score": 92
+  },
+  "utilities": {
+    "exact_terms": [
+      "energie",
+      "electricity",
+      "electric",
+      "gas",
+      "water",
+      "internet",
+      "utilities",
+      "utility bill",
+      "factura",
+      "invoice"
+    ],
+    "merchant_terms": [
+      "ppc energie",
+      "enel",
+      "engie",
+      "electrica",
+      "apa nova",
+      "digi",
+      "orange",
+      "vodafone",
+      "telekom",
+      "yoxo"
+    ],
+    "negative_terms": [
+      "refund",
+      "return"
+    ],
+    "fuzzy_enabled": true,
+    "min_fuzzy_score": 93
+  },
+  "internal_transfer": {
+    "exact_terms": [
+      "transfer bt pay",
+      "transfer intern",
+      "p2p btpay",
+      "transfer din card",
+      "catre",
+      "own transfer",
+      "internal transfer"
+    ],
+    "negative_terms": [
+      "chirie",
+      "rent",
+      "intretinere",
+      "maintenance"
+    ],
+    "fuzzy_enabled": false,
+    "min_fuzzy_score": 100
+  },
+  "salary_income": {
+    "exact_terms": [
+      "salariu",
+      "salary",
+      "payroll",
+      "wage",
+      "incasare op"
+    ],
+    "negative_terms": [],
+    "fuzzy_enabled": true,
+    "min_fuzzy_score": 95
+  }
+}
+
+

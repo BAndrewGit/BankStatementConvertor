@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
+import os
 import re
 from typing import Dict, List, Sequence, Tuple
 
@@ -13,12 +15,51 @@ FEE_HINTS = ["TAXA", "COMISION", "TAXA SERVICIU SMS", "COMISION PLATA INSTANT"]
 INTERNAL_TRANSFER_HINTS = ["TRANSFER BT PAY", "P2P BTPAY", "P2P BT PAY", "TRANSFER INTERN"]
 EXTERNAL_TRANSFER_HINTS = ["PLATA INSTANT", "TRANSFER CATRE", "TRANSFER EXTERN", "IBAN", "BENEFICIAR"]
 POS_HINTS = ["EPOS", "POS"]
+SALARY_HINTS = ["SALARIU", "SALARY", "DREPTURI SALARIALE", "PAYROLL"]
 
 TECHNICAL_FEE_FRAGMENT_PATTERN = re.compile(r"\bCOMISION\s+TRANZACTIE\b", re.IGNORECASE)
 
 
 class TransactionTypeClassifier:
     """Classify transactions using strict stage-1 ordering rules."""
+
+    def __init__(self, bootstrap_dictionary_path: str | None = None) -> None:
+        self._bootstrap_dictionary_path = bootstrap_dictionary_path or os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "config",
+            "bootstrap_dictionary.json",
+        )
+        self._internal_transfer_hints = list(INTERNAL_TRANSFER_HINTS)
+        self._salary_hints = list(SALARY_HINTS)
+        self._load_bootstrap_terms()
+
+    def _load_bootstrap_terms(self) -> None:
+        if not os.path.exists(self._bootstrap_dictionary_path):
+            return
+        try:
+            with open(self._bootstrap_dictionary_path, encoding="utf-8") as handle:
+                payload = json.load(handle) or {}
+        except Exception:
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        internal = payload.get("internal_transfer") if isinstance(payload.get("internal_transfer"), dict) else {}
+        salary = payload.get("salary_income") if isinstance(payload.get("salary_income"), dict) else {}
+
+        for term in internal.get("exact_terms", []) or []:
+            term_upper = str(term).strip().upper()
+            # Skip over-broad one-word hints that trigger many false positives.
+            if term_upper in {"CATRE", "TO"}:
+                continue
+            if term_upper and term_upper not in self._internal_transfer_hints:
+                self._internal_transfer_hints.append(term_upper)
+
+        for term in salary.get("exact_terms", []) or []:
+            term_upper = str(term).strip().upper()
+            if term_upper and term_upper not in self._salary_hints:
+                self._salary_hints.append(term_upper)
 
     def classify(self, transaction: Transaction) -> Transaction:
         raw_description = transaction.raw_description or ""
@@ -33,6 +74,14 @@ class TransactionTypeClassifier:
                 channel=Channel.BLOCKED.value,
                 txn_type=TransactionType.BLOCKED_AMOUNT.value,
                 confidence=0.99,
+            )
+
+        if transaction.direction == "credit" and self._contains_any(description, self._salary_hints):
+            return replace(
+                transaction,
+                channel=Channel.TRANSFER.value,
+                txn_type=TransactionType.SALARY_INCOME.value,
+                confidence=0.98,
             )
 
         if self._contains_any(description, ATM_HINTS):
@@ -51,7 +100,7 @@ class TransactionTypeClassifier:
                 confidence=0.96,
             )
 
-        if self._contains_any(description, INTERNAL_TRANSFER_HINTS):
+        if self._contains_any(description, self._internal_transfer_hints):
             return replace(
                 transaction,
                 channel=Channel.TRANSFER.value,

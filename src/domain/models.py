@@ -23,6 +23,24 @@ class Transaction:
     category_area: Optional[str] = None
     mapping_method: Optional[str] = None
     confidence: Optional[float] = None
+    recipient_name: Optional[str] = None
+    recipient_iban: Optional[str] = None
+    entity_key: Optional[str] = None
+    state: Optional[str] = None
+    evidence_type: Optional[str] = None
+    match_source: Optional[str] = None
+    fuzzy_match_term: Optional[str] = None
+    fuzzy_match_score: Optional[float] = None
+    final_spend_category: Optional[str] = None
+    is_essential: Optional[bool] = None
+    is_nonessential: Optional[bool] = None
+    is_internal_transfer: Optional[bool] = None
+    is_salary: Optional[bool] = None
+    is_housing: Optional[bool] = None
+    is_utility: Optional[bool] = None
+    is_impulse_candidate: Optional[bool] = None
+    impulse_category: Optional[str] = None
+    classification_confidence: Optional[float] = None
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -46,5 +64,23 @@ class Transaction:
             category_area=payload.get("category_area"),
             mapping_method=payload.get("mapping_method"),
             confidence=payload.get("confidence"),
+            recipient_name=payload.get("recipient_name"),
+            recipient_iban=payload.get("recipient_iban"),
+            entity_key=payload.get("entity_key"),
+            state=payload.get("state"),
+            evidence_type=payload.get("evidence_type"),
+            match_source=payload.get("match_source"),
+            fuzzy_match_term=payload.get("fuzzy_match_term"),
+            fuzzy_match_score=payload.get("fuzzy_match_score"),
+            final_spend_category=payload.get("final_spend_category"),
+            is_essential=payload.get("is_essential"),
+            is_nonessential=payload.get("is_nonessential"),
+            is_internal_transfer=payload.get("is_internal_transfer"),
+            is_salary=payload.get("is_salary"),
+            is_housing=payload.get("is_housing"),
+            is_utility=payload.get("is_utility"),
+            is_impulse_candidate=payload.get("is_impulse_candidate"),
+            impulse_category=payload.get("impulse_category"),
+            classification_confidence=payload.get("classification_confidence"),
         )
 

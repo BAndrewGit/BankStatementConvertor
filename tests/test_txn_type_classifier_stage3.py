@@ -13,7 +13,8 @@ class TransactionTypeClassifierStage3Tests(unittest.TestCase):
             Transaction("4", "2026-03-01", 100.0, "RON", "debit", "Transfer BT PAY catre cont propriu", "booked_transactions"),
             Transaction("5", "2026-03-01", 600.0, "RON", "debit", "Plata Instant catre beneficiar extern", "booked_transactions"),
             Transaction("6", "2026-03-01", 40.0, "RON", "debit", "POS MEGA IMAGE", "booked_transactions"),
-            Transaction("7", "2026-03-01", 10.0, "RON", "debit", "Descriere neclasificata", "booked_transactions"),
+            Transaction("7", "2026-03-01", 2000.0, "RON", "credit", "Incasare salariu FEB 2026", "booked_transactions"),
+            Transaction("8", "2026-03-01", 10.0, "RON", "debit", "Descriere neclasificata", "booked_transactions"),
         ]
 
         classified, summary = classify_transactions(rows)
@@ -24,9 +25,10 @@ class TransactionTypeClassifierStage3Tests(unittest.TestCase):
         self.assertEqual(classified[3].txn_type, "internal_transfer")
         self.assertEqual(classified[4].txn_type, "external_transfer")
         self.assertEqual(classified[5].txn_type, "card_purchase")
-        self.assertEqual(classified[6].txn_type, "unknown")
+        self.assertEqual(classified[6].txn_type, "salary_income")
+        self.assertEqual(classified[7].txn_type, "unknown")
 
-        self.assertAlmostEqual(summary["valid_rate"], 6 / 7, places=4)
+        self.assertAlmostEqual(summary["valid_rate"], 7 / 8, places=4)
 
 
 if __name__ == "__main__":

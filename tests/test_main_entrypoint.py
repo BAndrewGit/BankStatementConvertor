@@ -14,14 +14,45 @@ class MainEntrypointTests(unittest.TestCase):
             root = Mock()
             mocked_tk.return_value = root
 
-            with patch("main.filedialog.askopenfilename", return_value=r"C:\in\statement.pdf"):
+            with patch("main.filedialog.askopenfilenames", return_value=(r"C:\in\statement.pdf",)):
                 with patch("main.filedialog.askdirectory", return_value=r"C:\out"):
                     with patch("main.run_end_to_end", return_value=fake_result) as mocked_run:
-                        with patch("main.messagebox.showinfo") as mocked_info:
-                            exit_code = main.main()
+                        with patch("main.run_end_to_end_many") as mocked_run_many:
+                            with patch("main.messagebox.showinfo") as mocked_info:
+                                exit_code = main.main()
 
         self.assertEqual(exit_code, 0)
         mocked_run.assert_called_once_with(pdf_path=r"C:\in\statement.pdf", export_dir=r"C:\out")
+        mocked_run_many.assert_not_called()
+        mocked_info.assert_not_called()
+        root.withdraw.assert_called_once()
+        root.destroy.assert_called_once()
+
+    def test_main_runs_batch_flow_when_multiple_pdfs_selected(self):
+        fake_result = Mock()
+        fake_result.run_report_path = r"C:\out\run_report.json"
+        fake_result.to_dict.return_value = {"ok": True}
+
+        with patch("main.Tk") as mocked_tk:
+            root = Mock()
+            mocked_tk.return_value = root
+
+            with patch(
+                "main.filedialog.askopenfilenames",
+                return_value=(r"C:\in\statement_1.pdf", r"C:\in\statement_2.pdf"),
+            ):
+                with patch("main.filedialog.askdirectory", return_value=r"C:\out"):
+                    with patch("main.run_end_to_end") as mocked_run:
+                        with patch("main.run_end_to_end_many", return_value=fake_result) as mocked_run_many:
+                            with patch("main.messagebox.showinfo") as mocked_info:
+                                exit_code = main.main()
+
+        self.assertEqual(exit_code, 0)
+        mocked_run.assert_not_called()
+        mocked_run_many.assert_called_once_with(
+            pdf_paths=[r"C:\in\statement_1.pdf", r"C:\in\statement_2.pdf"],
+            export_dir=r"C:\out",
+        )
         mocked_info.assert_not_called()
         root.withdraw.assert_called_once()
         root.destroy.assert_called_once()
@@ -37,13 +68,15 @@ class MainEntrypointTests(unittest.TestCase):
                 root = Mock()
                 mocked_tk.return_value = root
 
-                with patch("main.filedialog.askopenfilename", return_value=r"C:\in\statement.pdf"):
+                with patch("main.filedialog.askopenfilenames", return_value=(r"C:\in\statement.pdf",)):
                     with patch("main.filedialog.askdirectory", return_value=r"C:\out"):
                         with patch("main.run_end_to_end", return_value=fake_result):
-                            with patch("main.messagebox.showinfo") as mocked_info:
-                                exit_code = main.main()
+                            with patch("main.run_end_to_end_many") as mocked_run_many:
+                                with patch("main.messagebox.showinfo") as mocked_info:
+                                    exit_code = main.main()
 
         self.assertEqual(exit_code, 0)
+        mocked_run_many.assert_not_called()
         mocked_info.assert_called_once()
 
     def test_main_returns_one_when_pdf_not_selected(self):
@@ -51,7 +84,7 @@ class MainEntrypointTests(unittest.TestCase):
             root = Mock()
             mocked_tk.return_value = root
 
-            with patch("main.filedialog.askopenfilename", return_value=""):
+            with patch("main.filedialog.askopenfilenames", return_value=()):
                 exit_code = main.main()
 
         self.assertEqual(exit_code, 1)
@@ -62,7 +95,7 @@ class MainEntrypointTests(unittest.TestCase):
             root = Mock()
             mocked_tk.return_value = root
 
-            with patch("main.filedialog.askopenfilename", return_value=r"C:\in\statement.pdf"):
+            with patch("main.filedialog.askopenfilenames", return_value=(r"C:\in\statement.pdf",)):
                 with patch("main.filedialog.askdirectory", return_value=""):
                     with patch("main.run_end_to_end") as mocked_run:
                         with patch("main.messagebox.showerror") as mocked_error:

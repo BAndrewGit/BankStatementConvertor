@@ -17,7 +17,7 @@ Instead of manually copying transactions into Excel, this tool automatically:
 You don't need to be a programmer. Just follow these 3 steps:
 
 1.  **Run the application** (double-click the start script or run the command below).
-2.  A window will pop up asking for your **PDF Statement**: select your file.
+2.  A window will pop up asking for your **PDF Statement(s)**: select one or multiple files.
 3.  Another window will confirm where to save the results: select any **Output Folder** you like.
 
 That's it! The app will process everything and save several Excel-friendly CSV files in your chosen folder.
@@ -26,7 +26,7 @@ That's it! The app will process everything and save several Excel-friendly CSV f
 
 In your output folder, look for these important files:
 
--   **`final_dataset.csv`** -> One-row feature vector with the exact model columns.
+-   **`final_dataset.csv`** -> One row per month for multi-PDF runs (`statement_month` + model columns).
 -   **`transactions_classified.csv`** -> Cleaned and classified transaction-level output.
 -   **`run_report.json`** -> Run summary (counts, unknowns, latency) + quality metrics.
 
@@ -58,9 +58,21 @@ python main.py
 
 Single flow used in production:
 
-1. `main.py` opens file/folder selectors.
+1. `main.py` opens file/folder selectors (supports multi-select PDFs).
 2. `src/pipelines/run_end_to_end.py` orchestrates parse -> classify -> map -> feature build.
-3. Results are written in the selected output folder.
+3. Results are written in the selected output folder, including a month-concatenated dataset for batch runs.
+
+Batch behavior notes:
+
+- Multi-PDF processing deduplicates mirrored inter-account transfers using `REF` + amount keys.
+- For mirrored transfer pairs (debit/credit), the credit-side transaction is retained.
+- Salary-related credit entries are classified as `salary_income` when descriptions contain salary hints.
+
+Dictionary and local memory locations:
+
+- Bootstrap dictionary: `src/config/bootstrap_dictionary.json`
+- Per-user local entity memory: `data/entity_memory/<profile_id>.json`
+- `profile_id` and both paths are emitted in `run_report.json` under `profile_id` and `local_storage`.
 
 ### Running Tests
 

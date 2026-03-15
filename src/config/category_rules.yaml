@@ -28,3 +28,16 @@ fallback_by_txn_type:
   subscription: Entertainment
   utility_payment: Housing
 
+impulse_category_merchants:
+  electronics_or_gadgets:
+    - eMAG
+    - Altex
+  food_quick_consumption:
+    - Pranzo by ESS
+    - Taco Bell
+    - Froo
+    - JKC Restaurants
+
+impulse_rules:
+  max_candidate_amount: 300
+
