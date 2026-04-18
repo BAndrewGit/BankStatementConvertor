@@ -1,0 +1,5 @@
+thresholds:
+  discretionary_spending_high: 3.0
+  credit_dependency_high: 3.0
+  essential_income_ratio_high: 0.45
+  emergency_buffer_low: 0.0

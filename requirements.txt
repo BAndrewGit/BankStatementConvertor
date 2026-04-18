@@ -3,4 +3,5 @@ PyYAML>=6.0
 requests>=2.32.0
 python-dotenv>=1.0.1
 rapidfuzz>=3.10.1
-
+PySide6>=6.8.0
+scikit-learn>=1.8.0

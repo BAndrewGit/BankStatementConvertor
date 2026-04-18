@@ -1,0 +1,4 @@
+{
+  "saving_probability_threshold": 0.5,
+  "top_k_factors": 5
+}

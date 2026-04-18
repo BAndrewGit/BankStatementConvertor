@@ -7,22 +7,27 @@ import requests
 from dotenv import load_dotenv
 
 
+_UNSET = object()
+
+
 class TermeneClient:
     """Minimal Termene API client used only as ONRC fallback."""
 
     def __init__(
         self,
         base_url: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        schema_key: Optional[str] = None,
+        username: Optional[str] | object = _UNSET,
+        password: Optional[str] | object = _UNSET,
+        schema_key: Optional[str] | object = _UNSET,
     ) -> None:
         load_dotenv()
 
         self._base_url = (base_url or os.getenv("TERMENE_API_URL") or "https://api.termene.ro/v2").rstrip("/")
-        self._username = username or os.getenv("TERMENE_USERNAME")
-        self._password = password or os.getenv("TERMENE_PASSWORD")
-        self._schema_key = schema_key or os.getenv("TERMENE_SCHEMA_KEY")
+
+        # Explicit None means "disable credential", while omitted uses environment fallback.
+        self._username = os.getenv("TERMENE_USERNAME") if username is _UNSET else username
+        self._password = os.getenv("TERMENE_PASSWORD") if password is _UNSET else password
+        self._schema_key = os.getenv("TERMENE_SCHEMA_KEY") if schema_key is _UNSET else schema_key
 
     def search_company(self, company_name: str) -> Optional[Dict[str, Any]]:
         if not company_name.strip():

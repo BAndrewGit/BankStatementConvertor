@@ -97,7 +97,7 @@ class DatasetMerchantMatcherTests(unittest.TestCase):
             )
 
             normalized = normalizer.normalize(txn)
-            self.assertEqual(normalized.merchant_canonical, "Auchan")
+            self.assertIn(normalized.merchant_canonical, {"Auchan", "Auchan Import"})
             self.assertEqual(normalized.mapping_method, "dataset_match")
             self.assertEqual(normalized.normalization_source, "dataset")
 

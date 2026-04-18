@@ -1,0 +1,24 @@
+{
+  "model_family": "multitask",
+  "model_config": {
+    "input_dim": 55,
+    "hidden_dims": [
+      64,
+      32
+    ],
+    "dropout": 0.3,
+    "activation": "relu"
+  },
+  "source_run": "runs\\multitask_ablation_20260405_150048_608799b0",
+  "selection_report": {
+    "spearman_ok": false,
+    "mae_ok": false,
+    "stability_ok": true,
+    "savings_ok": false,
+    "multitask_risk_mae": 0.18410065084695815,
+    "multitask_risk_spearman": 0.47743421620236776,
+    "hybrid_risk_mae": 0.21168946474790573,
+    "hybrid_risk_spearman": 0.23826490251227245
+  },
+  "exported_at": "2026-04-05T15:01:02.797071"
+}

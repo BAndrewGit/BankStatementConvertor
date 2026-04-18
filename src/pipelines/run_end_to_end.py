@@ -18,6 +18,7 @@ from src.memory.entity_memory import EntityMemoryRepository
 from src.pipelines.build_features import build_features
 from src.pipelines.classify_transactions import classify_parsed_transactions
 from src.pipelines.parse_statement import parse_statement
+from src.pipelines.program2_adapter import build_file_traceability
 
 
 @dataclass(frozen=True)
@@ -267,9 +268,18 @@ def _write_single_row_dataset(final_dataset_csv_path: str, feature_vector: Dict[
 def _build_final_dataset_row_with_income_category(
     feature_vector: Dict[str, float],
     income_category_value: float,
+    profile_answers: Optional[Mapping[str, object]] = None,
 ) -> Dict[str, float]:
     row = build_final_dataset_row(feature_vector)
     row["Income_Category"] = float(income_category_value)
+
+    for column, raw_value in (profile_answers or {}).items():
+        # Keep salary-derived Income_Category authoritative for model input consistency.
+        if column == "Income_Category":
+            continue
+        if column in row:
+            row[column] = float(raw_value)
+
     return row
 
 
@@ -298,6 +308,7 @@ def run_end_to_end(
     cache_repo: Optional[CacheRepository] = None,
     manual_labels: Optional[Mapping[str, Mapping[str, object]]] = None,
     max_transactions_in_report: int = 500,
+    profile_answers: Optional[Mapping[str, object]] = None,
 ) -> EndToEndRunResult:
     os.makedirs(export_dir, exist_ok=True)
     cache = cache_repo or FileCacheRepository(persist_every_n_writes=200)
@@ -344,6 +355,7 @@ def run_end_to_end(
             _build_final_dataset_row_with_income_category(
                 feature_vector=feature_vector,
                 income_category_value=float(salary_metrics["salary_income_total"]),
+                profile_answers=profile_answers,
             )
         )
 
@@ -357,6 +369,7 @@ def run_end_to_end(
 
     report_payload: Dict[str, object] = {
         "pdf_path": pdf_path,
+        "per_file_traceability": build_file_traceability([pdf_path]),
         "output_files": {
             "run_report": run_report_path,
             "transactions_classified": transactions_csv_path,
@@ -405,6 +418,7 @@ def run_end_to_end_many(
     cache_repo: Optional[CacheRepository] = None,
     manual_labels: Optional[Mapping[str, Mapping[str, object]]] = None,
     max_transactions_in_report: int = 500,
+    profile_answers: Optional[Mapping[str, object]] = None,
 ) -> BatchEndToEndRunResult:
     if not pdf_paths:
         raise ValueError("run_end_to_end_many requires at least one PDF path")
@@ -477,6 +491,7 @@ def run_end_to_end_many(
             row = _build_final_dataset_row_with_income_category(
                 feature_vector=monthly_features[month_key],
                 income_category_value=float(month_salary_metrics["salary_income_total"]),
+                profile_answers=profile_answers,
             )
             writer.writerow({"statement_month": month_key, **row})
 
@@ -492,6 +507,7 @@ def run_end_to_end_many(
 
     report_payload: Dict[str, object] = {
         "pdf_paths": list(pdf_paths),
+        "per_file_traceability": build_file_traceability(pdf_paths),
         "output_files": {
             "run_report": run_report_path,
             "transactions_classified": transactions_csv_path,

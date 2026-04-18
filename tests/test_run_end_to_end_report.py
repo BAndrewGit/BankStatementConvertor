@@ -57,6 +57,7 @@ class RunEndToEndReportTests(unittest.TestCase):
                             pdf_path=pdf_path,
                             export_dir=temp_dir,
                             cache_repo=InMemoryCacheRepository(),
+                            profile_answers={"Gender_Male": 1.0, "Income_Category": 9999.0},
                         )
 
             self.assertTrue(os.path.exists(result.run_report_path))
@@ -67,6 +68,10 @@ class RunEndToEndReportTests(unittest.TestCase):
                 payload = json.load(handle)
 
             self.assertIn("quality_metrics", payload)
+            self.assertIn("per_file_traceability", payload)
+            self.assertEqual(len(payload["per_file_traceability"]), 1)
+            self.assertEqual(payload["per_file_traceability"][0]["pdf_path"], pdf_path)
+
             required = {
                 "pdf_parse_latency_ms",
                 "transactions_extracted_count",
@@ -105,9 +110,12 @@ class RunEndToEndReportTests(unittest.TestCase):
                 reader = csv.DictReader(handle)
                 header = reader.fieldnames
                 row = next(reader)
-            self.assertEqual(header, FINAL_DATASET_COLUMNS)
-            self.assertIn("Income_Category", header)
+            self.assertIsNotNone(header)
+            header_columns = list(header or [])
+            self.assertEqual(header_columns, FINAL_DATASET_COLUMNS)
+            self.assertIn("Income_Category", header_columns)
             self.assertEqual(row["Income_Category"], "0.0")
+            self.assertEqual(row["Gender_Male"], "1.0")
 
     def test_batch_run_writes_monthly_dataset_for_multiple_pdfs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -189,6 +197,7 @@ class RunEndToEndReportTests(unittest.TestCase):
                         pdf_paths=[pdf_path_1, pdf_path_2],
                         export_dir=temp_dir,
                         cache_repo=InMemoryCacheRepository(),
+                        profile_answers={"Gender_Female": 1.0, "Income_Category": 123.0},
                     )
             self.assertTrue(os.path.exists(result.final_dataset_csv_path))
             self.assertEqual(set(result.monthly_features.keys()), {"2026-02", "2026-03"})
@@ -196,10 +205,16 @@ class RunEndToEndReportTests(unittest.TestCase):
             with open(result.final_dataset_csv_path, encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual([row["statement_month"] for row in rows], ["2026-02", "2026-03"])
+            self.assertEqual([row["Gender_Female"] for row in rows], ["1.0", "1.0"])
+            self.assertEqual([row["Income_Category"] for row in rows], ["0.0", "0.0"])
 
             with open(result.run_report_path, encoding="utf-8") as handle:
                 payload = json.load(handle)
             self.assertIn("pdf_paths", payload)
+            self.assertIn("per_file_traceability", payload)
+            self.assertEqual(len(payload["per_file_traceability"]), 2)
+            self.assertEqual(payload["per_file_traceability"][0]["pdf_path"], pdf_path_1)
+            self.assertEqual(payload["per_file_traceability"][1]["pdf_path"], pdf_path_2)
             self.assertEqual(len(payload["pdf_paths"]), 2)
             self.assertNotIn("final_dataset_monthly", payload["output_files"])
 
@@ -328,6 +343,7 @@ class RunEndToEndReportTests(unittest.TestCase):
                         pdf_paths=[pdf_path],
                         export_dir=temp_dir,
                         cache_repo=InMemoryCacheRepository(),
+                        profile_answers={"Income_Category": 1.0, "Gender_Male": 1.0},
                     )
 
             with open(result.final_dataset_csv_path, encoding="utf-8", newline="") as handle:
@@ -336,6 +352,7 @@ class RunEndToEndReportTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["statement_month"], "2026-02")
             self.assertEqual(float(rows[0]["Income_Category"]), 5773.0)
+            self.assertEqual(float(rows[0]["Gender_Male"]), 1.0)
 
 
 if __name__ == "__main__":
