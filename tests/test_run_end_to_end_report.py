@@ -3,6 +3,7 @@ import csv
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.domain.models import Transaction
@@ -12,6 +13,13 @@ from src.pipelines.run_end_to_end import run_end_to_end, run_end_to_end_many
 
 
 class RunEndToEndReportTests(unittest.TestCase):
+    class _ScaleByTwoPredictor:
+        def scale_ordered_values(self, row_values):
+            return [float(value) * 2.0 for value in row_values]
+
+        def predict(self, inference_row):
+            return SimpleNamespace(risk_score=0.77, saving_probability=0.23)
+
     def test_each_run_writes_run_report_json_with_required_metrics(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = os.path.join(temp_dir, "fixed.pdf")
@@ -115,7 +123,7 @@ class RunEndToEndReportTests(unittest.TestCase):
             self.assertEqual(header_columns, FINAL_DATASET_COLUMNS)
             self.assertIn("Income_Category", header_columns)
             self.assertEqual(row["Income_Category"], "0.0")
-            self.assertEqual(row["Gender_Male"], "1.0")
+            self.assertEqual(row["Gender_Male"], "1")
 
     def test_batch_run_writes_monthly_dataset_for_multiple_pdfs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -205,7 +213,7 @@ class RunEndToEndReportTests(unittest.TestCase):
             with open(result.final_dataset_csv_path, encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual([row["statement_month"] for row in rows], ["2026-02", "2026-03"])
-            self.assertEqual([row["Gender_Female"] for row in rows], ["1.0", "1.0"])
+            self.assertEqual([row["Gender_Female"] for row in rows], ["1", "1"])
             self.assertEqual([row["Income_Category"] for row in rows], ["0.0", "0.0"])
 
             with open(result.run_report_path, encoding="utf-8") as handle:
@@ -217,6 +225,75 @@ class RunEndToEndReportTests(unittest.TestCase):
             self.assertEqual(payload["per_file_traceability"][1]["pdf_path"], pdf_path_2)
             self.assertEqual(len(payload["pdf_paths"]), 2)
             self.assertNotIn("final_dataset_monthly", payload["output_files"])
+
+    def test_run_applies_scaler_before_saving_final_dataset(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = os.path.join(temp_dir, "fixed.pdf")
+            with open(pdf_path, "wb") as handle:
+                handle.write(b"%PDF-1.4\nreport-test\n")
+
+            parsed = [
+                Transaction(
+                    transaction_id="1",
+                    booking_date="2026-03-01",
+                    amount=100.0,
+                    currency="RON",
+                    direction="debit",
+                    raw_description="POS MEGAIMAGE",
+                    source_section="booked_transactions",
+                )
+            ]
+            classified = [
+                Transaction(
+                    transaction_id="1",
+                    booking_date="2026-03-01",
+                    amount=100.0,
+                    currency="RON",
+                    direction="debit",
+                    raw_description="POS MEGAIMAGE",
+                    source_section="booked_transactions",
+                    txn_type="card_purchase",
+                    confidence=1.0,
+                )
+            ]
+
+            with patch("src.pipelines.run_end_to_end.parse_statement", return_value=parsed):
+                with patch("src.pipelines.run_end_to_end.classify_parsed_transactions", return_value=(classified, {"valid_rate": 1.0})):
+                    with patch(
+                        "src.pipelines.run_end_to_end.build_features",
+                        return_value={column: 0.0 for column in FEATURE_COLUMNS},
+                    ):
+                        with patch(
+                            "src.pipelines.run_end_to_end._build_export_scaler",
+                            return_value=(
+                                [
+                                    "Age",
+                                    "Income_Category",
+                                    "Essential_Needs_Percentage",
+                                    "Product_Lifetime_Clothing",
+                                    "Product_Lifetime_Tech",
+                                    "Product_Lifetime_Appliances",
+                                    "Product_Lifetime_Cars",
+                                ],
+                                self._ScaleByTwoPredictor(),
+                            ),
+                        ):
+                            result = run_end_to_end(
+                                pdf_path=pdf_path,
+                                export_dir=temp_dir,
+                                cache_repo=InMemoryCacheRepository(),
+                                profile_answers={"Age": 30.0, "Gender_Male": 1.0, "Income_Category": 9999.0},
+                                artifacts_dir=temp_dir,
+                            )
+
+            with open(result.final_dataset_csv_path, encoding="utf-8", newline="") as handle:
+                row = next(csv.DictReader(handle))
+
+            self.assertEqual(row["Age"], "60.0")
+            self.assertEqual(row["Gender_Male"], "1")
+            self.assertEqual(row["Income_Category"], "0.0")
+            self.assertEqual(row["Risk_Score"], "0.77")
+            self.assertEqual(row["Behavior_Risk_Level"], "Risky")
 
     def test_batch_run_deduplicates_mirrored_transfer_between_accounts(self):
         with tempfile.TemporaryDirectory() as temp_dir:

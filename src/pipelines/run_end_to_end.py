@@ -8,9 +8,10 @@ import json
 import os
 import re
 from time import perf_counter
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from src.features.feature_builder import FINAL_DATASET_COLUMNS, build_final_dataset_row
+from src.domain.inference_contracts import InferenceInputRow
+from src.features.feature_builder import FINAL_DATASET_COLUMNS, build_final_dataset_row, classify_behavior_risk_level
 from src.features.expense_aggregator import aggregate_expenses
 from src.features.quality_metrics import QualityMetrics, compute_quality_metrics
 from src.infrastructure.cache import CacheRepository, FileCacheRepository
@@ -280,7 +281,162 @@ def _build_final_dataset_row_with_income_category(
         if column in row:
             row[column] = float(raw_value)
 
-    return row
+    return _coerce_final_dataset_integer_columns(row)
+
+
+def _final_dataset_integer_columns() -> set[str]:
+    return {
+        "Debt_Level",
+        "Bank_Account_Analysis_Frequency",
+        "Save_Money_No",
+        "Save_Money_Yes",
+        "Impulse_Buying_Frequency",
+        "Savings_Goal_Major_Purchases",
+        "Savings_Goal_Retirement",
+        "Savings_Goal_Emergency_Fund",
+        "Savings_Goal_Child_Education",
+        "Savings_Goal_Vacation",
+        "Savings_Goal_Other",
+        "Savings_Obstacle_Other",
+        "Savings_Obstacle_Insufficient_Income",
+        "Savings_Obstacle_Other_Expenses",
+        "Savings_Obstacle_Not_Priority",
+        "Credit_Usage_Essential_Needs",
+        "Credit_Usage_Major_Purchases",
+        "Credit_Usage_Unexpected_Expenses",
+        "Credit_Usage_Personal_Needs",
+        "Credit_Usage_Never_Used",
+        "Family_Status_Another",
+        "Family_Status_In a relationship/married with children",
+        "Family_Status_In a relationship/married without children",
+        "Family_Status_Single, no children",
+        "Family_Status_Single, with children",
+        "Gender_Female",
+        "Gender_Male",
+        "Gender_Prefer not to say",
+        "Financial_Attitude_I am disciplined in saving",
+        "Financial_Attitude_I try to find a balance",
+        "Financial_Attitude_Spend more than I earn",
+        "Budget_Planning_Don't plan at all",
+        "Budget_Planning_Plan budget in detail",
+        "Budget_Planning_Plan only essentials",
+        "Impulse_Buying_Category_Clothing or personal care products",
+        "Impulse_Buying_Category_Electronics or gadgets",
+        "Impulse_Buying_Category_Entertainment",
+        "Impulse_Buying_Category_Food",
+        "Impulse_Buying_Category_Other",
+        "Impulse_Buying_Reason_Discounts or promotions",
+        "Impulse_Buying_Reason_Other",
+        "Impulse_Buying_Reason_Self-reward",
+        "Impulse_Buying_Reason_Social pressure",
+        "Financial_Investments_No, but interested",
+        "Financial_Investments_No, not interested",
+        "Financial_Investments_Yes, occasionally",
+        "Financial_Investments_Yes, regularly",
+    }
+
+
+def _coerce_final_dataset_integer_columns(row: Dict[str, float]) -> Dict[str, float]:
+    integer_columns = _final_dataset_integer_columns()
+    coerced = dict(row)
+    for column in integer_columns:
+        if column not in coerced or coerced[column] is None:
+            continue
+        try:
+            value = float(coerced[column])
+        except Exception:
+            continue
+        if value.is_integer():
+            coerced[column] = int(value)
+    return coerced
+
+
+def _predict_risk_score_for_row(
+    row: Dict[str, float],
+    export_scaler: Optional[Tuple[List[str], Any]],
+) -> Optional[float]:
+    if export_scaler is None:
+        return None
+
+    ordered_columns, predictor = export_scaler
+    if not hasattr(predictor, "predict"):
+        return None
+
+    try:
+        inference_values = {column: float(row.get(column, 0.0)) for column in ordered_columns}
+        inference_row = InferenceInputRow.from_values(inference_values, ordered_columns)
+        prediction = predictor.predict(inference_row)
+        risk_score = getattr(prediction, "risk_score", None)
+        if risk_score is None:
+            return None
+        return float(risk_score)
+    except Exception:
+        return None
+
+
+def _build_prediction_source(
+    feature_values: Mapping[str, float],
+    income_category_value: float,
+    profile_answers: Optional[Mapping[str, object]] = None,
+) -> Dict[str, float]:
+    source: Dict[str, float] = {}
+    for column, value in feature_values.items():
+        try:
+            source[str(column)] = float(value)
+        except Exception:
+            continue
+
+    source["Income_Category"] = float(income_category_value)
+    for column, raw_value in (profile_answers or {}).items():
+        if column == "Income_Category":
+            continue
+        try:
+            source[str(column)] = float(raw_value)
+        except Exception:
+            continue
+    return source
+
+
+def _build_export_scaler(artifacts_dir: Optional[str]) -> Optional[Tuple[List[str], Any]]:
+    if not artifacts_dir:
+        return None
+
+    try:
+        from src.inference.model_artifact_loader import ModelArtifactLoader
+        from src.inference.predictor import Predictor
+
+        artifacts = ModelArtifactLoader(artifacts_dir).load(require_multitask=False)
+    except Exception:
+        return None
+
+    return list(artifacts.feature_columns), Predictor(artifacts)
+
+
+def _scale_final_dataset_row(
+    row: Dict[str, float],
+    export_scaler: Optional[Tuple[List[str], Any]],
+) -> Dict[str, float]:
+    if export_scaler is None:
+        return _coerce_final_dataset_integer_columns(row)
+
+    ordered_columns, predictor = export_scaler
+    ordered_values: List[float] = []
+    for column in ordered_columns:
+        try:
+            ordered_values.append(float(row.get(column, 0.0)))
+        except Exception:
+            ordered_values.append(0.0)
+
+    try:
+        scaled_values = predictor.scale_ordered_values(ordered_values)
+    except Exception:
+        return row
+
+    scaled_row = dict(row)
+    for index, column in enumerate(ordered_columns):
+        if index < len(scaled_values):
+            scaled_row[column] = float(scaled_values[index])
+    return _coerce_final_dataset_integer_columns(scaled_row)
 
 
 def _combine_classification_summaries(
@@ -309,6 +465,7 @@ def run_end_to_end(
     manual_labels: Optional[Mapping[str, Mapping[str, object]]] = None,
     max_transactions_in_report: int = 500,
     profile_answers: Optional[Mapping[str, object]] = None,
+    artifacts_dir: Optional[str] = None,
 ) -> EndToEndRunResult:
     os.makedirs(export_dir, exist_ok=True)
     cache = cache_repo or FileCacheRepository(persist_every_n_writes=200)
@@ -348,14 +505,28 @@ def run_end_to_end(
     _write_transactions_csv(transactions_csv_path, classified_transactions)
 
     final_dataset_csv_path = os.path.join(export_dir, "final_dataset.csv")
+    export_scaler = _build_export_scaler(artifacts_dir)
     with open(final_dataset_csv_path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=FINAL_DATASET_COLUMNS)
         writer.writeheader()
+        prediction_source = _build_prediction_source(
+            feature_values=feature_vector,
+            income_category_value=float(salary_metrics["salary_income_total"]),
+            profile_answers=profile_answers,
+        )
+        row = _build_final_dataset_row_with_income_category(
+            feature_vector=feature_vector,
+            income_category_value=float(salary_metrics["salary_income_total"]),
+            profile_answers=profile_answers,
+        )
+        risk_score = _predict_risk_score_for_row(row=prediction_source, export_scaler=export_scaler)
+        if risk_score is not None:
+            row["Risk_Score"] = risk_score
+            row["Behavior_Risk_Level"] = classify_behavior_risk_level(risk_score)
         writer.writerow(
-            _build_final_dataset_row_with_income_category(
-                feature_vector=feature_vector,
-                income_category_value=float(salary_metrics["salary_income_total"]),
-                profile_answers=profile_answers,
+            _scale_final_dataset_row(
+                row=row,
+                export_scaler=export_scaler,
             )
         )
 
@@ -419,6 +590,7 @@ def run_end_to_end_many(
     manual_labels: Optional[Mapping[str, Mapping[str, object]]] = None,
     max_transactions_in_report: int = 500,
     profile_answers: Optional[Mapping[str, object]] = None,
+    artifacts_dir: Optional[str] = None,
 ) -> BatchEndToEndRunResult:
     if not pdf_paths:
         raise ValueError("run_end_to_end_many requires at least one PDF path")
@@ -482,18 +654,29 @@ def run_end_to_end_many(
     _write_transactions_csv(transactions_csv_path, deduped_transactions)
 
     final_dataset_csv_path = os.path.join(export_dir, "final_dataset.csv")
+    export_scaler = _build_export_scaler(artifacts_dir)
     with open(final_dataset_csv_path, "w", newline="", encoding="utf-8") as handle:
         fieldnames = ["statement_month", *FINAL_DATASET_COLUMNS]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for month_key in sorted(monthly_features.keys()):
             month_salary_metrics = _salary_income_metrics(monthly_transactions[month_key])
+            prediction_source = _build_prediction_source(
+                feature_values=monthly_features[month_key],
+                income_category_value=float(month_salary_metrics["salary_income_total"]),
+                profile_answers=profile_answers,
+            )
             row = _build_final_dataset_row_with_income_category(
                 feature_vector=monthly_features[month_key],
                 income_category_value=float(month_salary_metrics["salary_income_total"]),
                 profile_answers=profile_answers,
             )
-            writer.writerow({"statement_month": month_key, **row})
+            risk_score = _predict_risk_score_for_row(row=prediction_source, export_scaler=export_scaler)
+            if risk_score is not None:
+                row["Risk_Score"] = risk_score
+                row["Behavior_Risk_Level"] = classify_behavior_risk_level(risk_score)
+            scaled_row = _scale_final_dataset_row(row=row, export_scaler=export_scaler)
+            writer.writerow({"statement_month": month_key, **scaled_row})
 
     classification_summary = _combine_classification_summaries(classification_summaries)
 

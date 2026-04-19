@@ -6,6 +6,8 @@ from typing import Dict
 
 LOGGER = logging.getLogger(__name__)
 
+EXPENSE_DISTRIBUTION_BINARY_THRESHOLD = 5.0
+
 FEATURE_COLUMNS = [
     "Expense_Distribution_Food",
     "Expense_Distribution_Housing",
@@ -117,6 +119,19 @@ def _normalize_distribution_percentages(amounts: Dict[str, float]) -> Dict[str, 
     return rounded
 
 
+def _expense_distribution_to_binary(value: float) -> int:
+    return 1 if float(value) >= EXPENSE_DISTRIBUTION_BINARY_THRESHOLD else 0
+
+
+def classify_behavior_risk_level(risk_score: float) -> str:
+    score = float(risk_score)
+    if score <= -0.10:
+        return "Healthy"
+    if score <= 0.20:
+        return "Moderate"
+    return "Risky"
+
+
 def _impulse_frequency_band(impulse_ratio: float) -> float:
     # Ordinal mapping requested by model input:
     # Never=0, Rarely=1, Sometimes=2, Often=3, Always=4
@@ -155,10 +170,10 @@ def _build_single_impulse_category_flags(
 
     has_signal = any(tx_count > 0 or spend > 0 for _, tx_count, spend, _ in scored)
     if not has_signal:
-        return {category: 0.0 for category in categories}
+        return {category: 0 for category in categories}
 
     winner, _, _, _ = max(scored, key=lambda item: (item[1], item[2], -item[3]))
-    return {category: (1.0 if category == winner else 0.0) for category in categories}
+    return {category: (1 if category == winner else 0) for category in categories}
 
 
 def build_feature_vector(expense_totals: Dict[str, float]) -> Dict[str, float]:
@@ -218,8 +233,8 @@ def build_feature_vector(expense_totals: Dict[str, float]) -> Dict[str, float]:
     )
 
     net_cashflow = income_total - outgoing_total
-    save_money_yes = 1.0 if net_cashflow > 0 else 0.0
-    save_money_no = 0.0 if net_cashflow > 0 else 1.0
+    save_money_yes = 1 if net_cashflow > 0 else 0
+    save_money_no = 0 if net_cashflow > 0 else 1
 
     impulse_flags = _build_single_impulse_category_flags(
         expense_totals=expense_totals,
@@ -227,11 +242,11 @@ def build_feature_vector(expense_totals: Dict[str, float]) -> Dict[str, float]:
         electronics_total=electronics_total,
     )
 
-    impulse_frequency = 0.0
+    impulse_frequency = 0
     if outgoing_tx_count > 0:
-        impulse_frequency = _impulse_frequency_band(
+        impulse_frequency = int(_impulse_frequency_band(
             impulse_candidate_tx_count / outgoing_tx_count
-        )
+        ))
 
     feature_vector = {
         **distribution,
@@ -270,7 +285,13 @@ def build_final_dataset_row(feature_vector: Dict[str, float]) -> Dict[str, float
         "Impulse_Buying_Category_Other",
     ]
     for column in direct_mappings:
-        row[column] = float(feature_vector.get(column, 0.0))
+        value = feature_vector.get(column, 0.0)
+        if column.startswith("Expense_Distribution_"):
+            row[column] = _expense_distribution_to_binary(value)
+        elif column.startswith("Save_Money_") or column.startswith("Impulse_Buying_Category_") or column == "Impulse_Buying_Frequency":
+            row[column] = int(value)
+        else:
+            row[column] = float(value)
 
     return row
 

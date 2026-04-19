@@ -12,6 +12,7 @@ from src.domain.inference_contracts import (
     SOURCE_QUESTIONNAIRE,
     build_feature_source_map,
 )
+from src.features.feature_builder import EXPENSE_DISTRIBUTION_BINARY_THRESHOLD
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,8 @@ class FeatureAssembler:
             source = self._source_map[column]
             if source == SOURCE_PROGRAM:
                 value = statement_map.get(column)
+                if column.startswith("Expense_Distribution_") and value is not None:
+                    value = 1.0 if float(value) >= EXPENSE_DISTRIBUTION_BINARY_THRESHOLD else 0.0
             elif source == SOURCE_QUESTIONNAIRE:
                 if column.startswith("Savings_Obstacle_"):
                     if force_zero_savings_obstacles:

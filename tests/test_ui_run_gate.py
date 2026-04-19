@@ -1,3 +1,4 @@
+import json
 import csv
 import os
 import tempfile
@@ -108,6 +109,180 @@ class DesktopRunGateTests(unittest.TestCase):
         self.assertIn("Inference failed", results_tab.append_text.call_args[0][0])
         status_label.setText.assert_called_with("Run finished")
 
+    def test_handle_run_payload_appends_top_five_factor_summary(self):
+        results_tab = Mock()
+        status_label = Mock()
+        inference_summary = json.dumps(
+            {
+                "risk_score": 0.42,
+                "saving_probability": 0.58,
+                "risk_level": "moderate",
+                "monthly_predictions": {
+                    "2026-02": {
+                        "risk_score": 0.42,
+                        "saving_probability": 0.58,
+                        "risk_factors": [
+                            {"feature": "Age", "contribution": 0.33},
+                            {"feature": "Essential_Needs_Percentage", "contribution": 0.11},
+                        ],
+                        "healthy_factors": [
+                            {"feature": "Income_Category", "contribution": -0.22},
+                        ],
+                    },
+                    "2026-03": {
+                        "risk_score": 0.52,
+                        "saving_probability": 0.68,
+                        "risk_factors": [
+                            {"feature": "Age", "contribution": 0.91},
+                            {"feature": "Essential_Needs_Percentage", "contribution": 0.71},
+                        ],
+                        "healthy_factors": [
+                            {"feature": "Income_Category", "contribution": -0.81},
+                        ],
+                    },
+                },
+            }
+        )
+        fake_window = SimpleNamespace(
+            _last_run_payload={},
+            _results_tab=results_tab,
+            _active_profile_id=None,
+            _active_artifacts_dir="F:\\2026\\ProcesareExtrasCont\\model_artifacts",
+            _run_model_inference=Mock(return_value=inference_summary),
+            _status_label=status_label,
+            _profile_store=Mock(),
+        )
+
+        typed_window = cast(_MainWindow, cast(object, fake_window))
+        _MainWindow._handle_run_payload(typed_window, {"features": {"x": 1.0}})
+
+        self.assertGreaterEqual(results_tab.append_text.call_count, 2)
+        second_call_text = results_tab.append_text.call_args_list[1][0][0]
+        self.assertIn("Top 5 risk factors - average monthly prediction", second_call_text)
+        self.assertIn("1. Age: 0.620000", second_call_text)
+        self.assertIn("2. Essential_Needs_Percentage: 0.410000", second_call_text)
+        self.assertIn("Top 5 healthy behavior factors - average monthly prediction", second_call_text)
+        self.assertIn("1. Income_Category: -0.515000", second_call_text)
+        self.assertIn("Top 5 risk factors - 2026-02", second_call_text)
+        self.assertIn("1. Age: 0.330000", second_call_text)
+        self.assertIn("2. Essential_Needs_Percentage: 0.110000", second_call_text)
+        self.assertIn("Top 5 healthy behavior factors - 2026-02", second_call_text)
+        self.assertIn("1. Income_Category: -0.220000", second_call_text)
+        self.assertIn("Top 5 risk factors - 2026-03", second_call_text)
+        self.assertIn("1. Age: 0.910000", second_call_text)
+        self.assertIn("2. Essential_Needs_Percentage: 0.710000", second_call_text)
+        self.assertIn("Top 5 healthy behavior factors - 2026-03", second_call_text)
+        self.assertIn("1. Income_Category: -0.810000", second_call_text)
+        status_label.setText.assert_called_with("Run finished")
+
+    def test_handle_run_payload_exports_split_factor_text(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dataset_path = os.path.join(temp_dir, "final_dataset.csv")
+            run_report_path = os.path.join(temp_dir, "run_report.json")
+            with open(dataset_path, "w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=["Risk_Score", "Behavior_Risk_Level"])
+                writer.writeheader()
+                writer.writerow({"Risk_Score": "0.42", "Behavior_Risk_Level": "Moderate"})
+            with open(run_report_path, "w", encoding="utf-8") as handle:
+                json.dump({"output_files": {"final_dataset": dataset_path, "run_report": run_report_path}}, handle)
+
+            results_tab = Mock()
+            status_label = Mock()
+            inference_summary = json.dumps(
+                {
+                    "risk_score": 0.42,
+                    "saving_probability": 0.58,
+                    "risk_level": "moderate",
+                    "monthly_predictions": {
+                        "2026-02": {
+                            "risk_score": 0.42,
+                            "saving_probability": 0.58,
+                            "risk_factors": [
+                                {"feature": "Age", "contribution": 0.33},
+                                {"feature": "Essential_Needs_Percentage", "contribution": 0.11},
+                            ],
+                            "healthy_factors": [
+                                {"feature": "Income_Category", "contribution": -0.22},
+                            ],
+                        },
+                        "2026-03": {
+                            "risk_score": 0.52,
+                            "saving_probability": 0.68,
+                            "risk_factors": [
+                                {"feature": "Age", "contribution": 0.91},
+                                {"feature": "Essential_Needs_Percentage", "contribution": 0.71},
+                            ],
+                            "healthy_factors": [
+                                {"feature": "Income_Category", "contribution": -0.81},
+                            ],
+                        },
+                    },
+                }
+            )
+            fake_window = SimpleNamespace(
+                _last_run_payload={},
+                _results_tab=results_tab,
+                _active_profile_id=None,
+                _active_artifacts_dir="F:\\2026\\ProcesareExtrasCont\\model_artifacts",
+                _run_model_inference=Mock(return_value=inference_summary),
+                _status_label=status_label,
+                _profile_store=Mock(),
+            )
+
+            typed_window = cast(_MainWindow, cast(object, fake_window))
+            _MainWindow._handle_run_payload(
+                typed_window,
+                {"features": {"x": 1.0}, "output_files": {"final_dataset": dataset_path, "run_report": run_report_path}},
+            )
+
+            factors_path = os.path.join(temp_dir, "inference_factors.txt")
+            self.assertTrue(os.path.exists(factors_path))
+            with open(factors_path, encoding="utf-8") as handle:
+                content = handle.read()
+
+            self.assertIn("Average monthly prediction", content)
+            self.assertIn("risk_score: 0.47", content)
+            self.assertIn("Risk factors:", content)
+            self.assertIn("1. Age: 0.620000", content)
+            self.assertIn("2. Essential_Needs_Percentage: 0.410000", content)
+            self.assertIn("Healthy/stable factors:", content)
+            self.assertIn("1. Income_Category: -0.515000", content)
+            self.assertIn("the general section is the arithmetic mean of the monthly predictions", content)
+            self.assertEqual(fake_window._results_tab.append_text.call_count, 4)
+            with open(run_report_path, encoding="utf-8") as handle:
+                run_report = json.load(handle)
+            self.assertEqual(run_report["output_files"]["inference_factors"], factors_path)
+            status_label.setText.assert_called_with("Run finished")
+
+    def test_handle_run_payload_survives_malformed_output_files(self):
+        results_tab = Mock()
+        status_label = Mock()
+        fake_window = SimpleNamespace(
+            _last_run_payload={},
+            _results_tab=results_tab,
+            _active_profile_id="profile-1",
+            _active_artifacts_dir="",
+            _status_label=status_label,
+            _profile_store=Mock(),
+        )
+
+        typed_window = cast(_MainWindow, cast(object, fake_window))
+        _MainWindow._handle_run_payload(
+            typed_window,
+            {
+                "features": {"x": 1.0},
+                "output_files": "unexpected-shape",
+                "run_summary": "unexpected-shape",
+            },
+        )
+
+        results_tab.render.assert_called_once()
+        fake_window._profile_store.update_profile.assert_called_once_with(
+            "profile-1",
+            last_run={"run_report_path": None, "transaction_count": None},
+        )
+        status_label.setText.assert_called_with("Run finished")
+
     def test_prompt_output_strategy_returns_reuse_when_user_selects_no(self):
         message_box = _DummyMessageBox()
         message_box.question.return_value = message_box.StandardButton.No
@@ -180,34 +355,6 @@ class DesktopRunGateTests(unittest.TestCase):
         fake_window._sync_output_dir_from_active_profile.assert_called_once_with()
         fake_window._questions_tab.reload.assert_called_once_with()
 
-    def test_extract_prediction_payload_returns_values_for_valid_json(self):
-        payload = _MainWindow._extract_prediction_payload('{"risk_score": 0.31, "saving_probability": 0.69}')
-        self.assertIsNotNone(payload)
-        self.assertEqual(payload["risk_score"], 0.31)
-        self.assertEqual(payload["saving_probability"], 0.69)
-
-        self.assertIsNone(_MainWindow._extract_prediction_payload("Skipped: model artifacts unavailable"))
-
-    def test_persist_inference_to_final_dataset_writes_columns(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            dataset_path = os.path.join(temp_dir, "final_dataset.csv")
-            with open(dataset_path, "w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=["f1", "f2"])
-                writer.writeheader()
-                writer.writerow({"f1": "1", "f2": "2"})
-
-            report_payload = {"output_files": {"final_dataset": dataset_path}}
-            message = _MainWindow._persist_inference_to_final_dataset(
-                report_payload,
-                {"risk_score": 0.42, "saving_probability": 0.58},
-            )
-
-            self.assertIn("Inference persisted", str(message))
-            with open(dataset_path, "r", encoding="utf-8", newline="") as handle:
-                rows = list(csv.DictReader(handle))
-            self.assertEqual(rows[0]["risk_score"], "0.42")
-            self.assertEqual(rows[0]["saving_probability"], "0.58")
-
     def test_build_inference_feature_payload_injects_income_category_from_salary(self):
         payload = _MainWindow._build_inference_feature_payload(
             {
@@ -235,7 +382,7 @@ class DesktopRunGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             dataset_path = os.path.join(temp_dir, "final_dataset.csv")
             with open(dataset_path, "w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=["statement_month", "Income_Category"])
+                writer = csv.DictWriter(handle, fieldnames=["statement_month", "Income_Category", "Risk_Score", "Behavior_Risk_Level"])
                 writer.writeheader()
                 writer.writerow({"statement_month": "2026-02", "Income_Category": "5773"})
                 writer.writerow({"statement_month": "2026-03", "Income_Category": "5773"})
@@ -253,9 +400,11 @@ class DesktopRunGateTests(unittest.TestCase):
             self.assertIn("Monthly inference persisted", str(message))
             with open(dataset_path, "r", encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
-            self.assertEqual(rows[0]["risk_score"], "0.2")
+            self.assertEqual(rows[0]["Risk_Score"], "0.2")
+            self.assertEqual(rows[0]["Behavior_Risk_Level"], "Moderate")
             self.assertEqual(rows[0]["saving_probability"], "0.8")
-            self.assertEqual(rows[1]["risk_score"], "0.7")
+            self.assertEqual(rows[1]["Risk_Score"], "0.7")
+            self.assertEqual(rows[1]["Behavior_Risk_Level"], "Risky")
             self.assertEqual(rows[1]["saving_probability"], "0.3")
 
 

@@ -118,21 +118,21 @@ OPTIONAL_GROUP_FEATURES: Dict[str, set[str]] = {
 }
 
 
-def map_questionnaire_answers_to_one_hot(answers: Mapping[str, str]) -> Dict[str, float]:
+def map_questionnaire_answers_to_one_hot(answers: Mapping[str, str]) -> Dict[str, float | int]:
     """Convert selected options into one-hot model features for the 8 questionnaire groups."""
 
-    output: Dict[str, float] = {}
+    output: Dict[str, float | int] = {}
     for group_name, option_map in QUESTION_GROUPS.items():
         selected = answers.get(group_name)
         if selected not in option_map:
             if group_name in OPTIONAL_SINGLE_CHOICE_GROUPS and selected in {None, ""}:
                 for feature_name in option_map.values():
-                    output[feature_name] = 0.0
+                    output[feature_name] = 0
                 continue
             raise ValueError(f"Missing or invalid answer for '{group_name}'")
 
         for option_label, feature_name in option_map.items():
-            output[feature_name] = 1.0 if option_label == selected else 0.0
+            output[feature_name] = 1 if option_label == selected else 0
 
     return output
 
@@ -260,14 +260,14 @@ def map_raw_profile_inputs_to_one_hot(raw_inputs: Mapping[str, object]) -> Dict[
             raise ValueError(f"Invalid options for '{group_name}': {unknown}")
 
         for option_label, feature_name in option_map.items():
-            output[feature_name] = 1.0 if option_label in selected_options else 0.0
+            output[feature_name] = 1 if option_label in selected_options else 0
 
     for group_name, option_map in ORDINAL_CHOICE_GROUPS.items():
         selected = ordinal_choice.get(group_name)
         if selected not in option_map:
             raise ValueError(f"Missing or invalid answer for '{group_name}'")
         target_feature = ORDINAL_CHOICE_FEATURES[group_name]
-        output[target_feature] = float(option_map[str(selected)])
+        output[target_feature] = int(option_map[str(selected)])
 
     output["Age"] = _parse_float(numeric.get("Age"), "Age")
     output["Product_Lifetime_Clothing"] = _parse_lifetime(

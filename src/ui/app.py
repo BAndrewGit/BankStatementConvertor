@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import traceback
 from typing import Dict, List, Optional
@@ -12,6 +13,7 @@ from src.domain.inference_contracts import (
     build_feature_source_map,
 )
 from src.features.feature_assembler import FeatureAssembler
+from src.features.feature_builder import classify_behavior_risk_level
 from src.inference.model_artifact_loader import ModelArtifactLoader
 from src.inference.predictor import Predictor
 from src.memory.profile_store import ProfileStore
@@ -34,6 +36,23 @@ from src.profile.questionnaire import (
 DEFAULT_ARTIFACTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "model_artifacts")
 )
+_DESKTOP_LOG_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "logs", "desktop_ui_runtime.log")
+)
+
+
+def _desktop_logger() -> logging.Logger:
+    logger = logging.getLogger("desktop_ui")
+    if logger.handlers:
+        return logger
+
+    os.makedirs(os.path.dirname(_DESKTOP_LOG_PATH), exist_ok=True)
+    handler = logging.FileHandler(_DESKTOP_LOG_PATH, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger
 
 
 def get_default_artifacts_dir() -> str:
@@ -82,17 +101,31 @@ def validate_artifacts_folder_status(folder: str) -> Dict[str, object]:
 
 def launch_desktop_app() -> int:
     try:
+        from PySide6.QtCore import qInstallMessageHandler
         from PySide6.QtWidgets import QApplication
     except Exception as exc:
         raise RuntimeError("PySide6 is required for desktop UI. Install PySide6 first.") from exc
+
+    logger = _desktop_logger()
 
     # Ensure the hardcoded artifacts folder exists before UI starts.
     os.makedirs(DEFAULT_ARTIFACTS_DIR, exist_ok=True)
 
     app = QApplication([])
+
+    # Capture Qt warnings/errors in a deterministic log file for post-mortem debugging.
+    def _qt_message_handler(_msg_type, _context, message):
+        logger.error("Qt message: %s", message)
+
+    qInstallMessageHandler(_qt_message_handler)
+    app.aboutToQuit.connect(lambda: logger.info("Qt event: aboutToQuit"))
+
     window = _MainWindow()
     window.show()
-    return app.exec()
+    logger.info("Desktop UI started")
+    exit_code = app.exec()
+    logger.info("Desktop UI finished with exit code %s", exit_code)
+    return exit_code
 
 
 class _MainWindow:  # pragma: no cover - covered by integration usage, not unit tests.
@@ -118,6 +151,7 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
         self._last_run_payload: Dict[str, object] = {}
         self._current_run_thread = None
         self._current_run_worker = None
+        self._current_run_bridge = None
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -239,7 +273,7 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
             self._set_processing(True)
             self._status_label.setText("Running...")
 
-            from PySide6.QtCore import QObject, QThread, Signal
+            from PySide6.QtCore import QObject, QThread, Signal, Slot
 
             class _RunWorker(QObject):
                 finished = Signal(dict)
@@ -251,11 +285,13 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
                     paths: List[str],
                     export_path: str,
                     questionnaire_answers: Dict[str, float],
+                    artifacts_dir: str,
                 ) -> None:
                     super().__init__()
                     self._paths = paths
                     self._export_path = export_path
                     self._questionnaire_answers = questionnaire_answers
+                    self._artifacts_dir = artifacts_dir
 
                 def run(self) -> None:
                     try:
@@ -264,12 +300,14 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
                                 pdf_path=self._paths[0],
                                 export_dir=self._export_path,
                                 profile_answers=self._questionnaire_answers,
+                                artifacts_dir=self._artifacts_dir or None,
                             )
                         else:
                             run_result = run_end_to_end_many(
                                 pdf_paths=self._paths,
                                 export_dir=self._export_path,
                                 profile_answers=self._questionnaire_answers,
+                                artifacts_dir=self._artifacts_dir or None,
                             )
 
                         report_data = run_result.to_dict()
@@ -286,20 +324,42 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
                     finally:
                         self.done.emit()
 
+            class _UiBridge(QObject):
+                finished_on_ui = Signal(dict)
+                failed_on_ui = Signal(str)
+
+                @Slot(dict)
+                def forward_finished(self, payload: dict) -> None:
+                    self.finished_on_ui.emit(payload)
+
+                @Slot(str)
+                def forward_failed(self, message: str) -> None:
+                    self.failed_on_ui.emit(message)
+
             thread = QThread(self._qt_window)
-            worker = _RunWorker(list(pdf_paths), output_dir, profile_answers)
+            worker = _RunWorker(
+                list(pdf_paths),
+                output_dir,
+                profile_answers,
+                getattr(self, "_active_artifacts_dir", ""),
+            )
+            bridge = _UiBridge(self._qt_window)
             worker.moveToThread(thread)
 
             thread.started.connect(worker.run)
-            worker.finished.connect(self._handle_run_payload)
-            worker.failed.connect(self._handle_run_failure)
+            worker.finished.connect(bridge.forward_finished)
+            worker.failed.connect(bridge.forward_failed)
+            bridge.finished_on_ui.connect(self._handle_run_payload)
+            bridge.failed_on_ui.connect(self._handle_run_failure)
             worker.done.connect(thread.quit)
             worker.done.connect(worker.deleteLater)
+            thread.finished.connect(bridge.deleteLater)
             thread.finished.connect(thread.deleteLater)
             thread.finished.connect(self._on_run_thread_finished)
 
             self._current_run_thread = thread
             self._current_run_worker = worker
+            self._current_run_bridge = bridge
             thread.start()
         except Exception as exc:
             self._message_box_cls.critical(
@@ -343,38 +403,57 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
         return payload
 
     def _handle_run_payload(self, report_payload: Dict[str, object]) -> None:
-        self._last_run_payload = report_payload
-        self._results_tab.render(report_payload)
+        try:
+            self._last_run_payload = report_payload
+            self._results_tab.render(report_payload)
 
-        if self._active_profile_id:
-            self._profile_store.update_profile(
-                self._active_profile_id,
-                last_run={
-                    "run_report_path": report_payload.get("output_files", {}).get("run_report"),
-                    "transaction_count": report_payload.get("run_summary", {}).get("transaction_count"),
-                },
-            )
-
-        # Optional model inference after statement run if artifacts are configured.
-        if self._active_artifacts_dir:
-            try:
-                inference_summary = self._run_model_inference(report_payload)
-            except Exception as exc:
-                inference_summary = f"Inference failed: {exc}"
-            self._results_tab.append_text("\n\nInference summary:\n" + inference_summary)
-
-            prediction_payload = _MainWindow._extract_prediction_payload(inference_summary)
-            monthly_prediction_payloads = _MainWindow._extract_monthly_prediction_payloads(inference_summary)
-            if prediction_payload or monthly_prediction_payloads:
-                persist_message = _MainWindow._persist_inference_to_final_dataset(
-                    report_payload,
-                    prediction_payload=prediction_payload,
-                    monthly_prediction_payloads=monthly_prediction_payloads,
+            if self._active_profile_id:
+                output_files = report_payload.get("output_files")
+                run_summary = report_payload.get("run_summary")
+                run_report_path = output_files.get("run_report") if isinstance(output_files, dict) else None
+                transaction_count = run_summary.get("transaction_count") if isinstance(run_summary, dict) else None
+                self._profile_store.update_profile(
+                    self._active_profile_id,
+                    last_run={
+                        "run_report_path": run_report_path,
+                        "transaction_count": transaction_count,
+                    },
                 )
-                if persist_message:
-                    self._results_tab.append_text("\n" + persist_message)
 
-        self._status_label.setText("Run finished")
+            # Optional model inference after statement run if artifacts are configured.
+            if self._active_artifacts_dir:
+                try:
+                    inference_summary = self._run_model_inference(report_payload)
+                except Exception as exc:
+                    inference_summary = f"Inference failed: {exc}"
+                self._results_tab.append_text("\n\nInference summary:\n" + inference_summary)
+                formatted_factors = _MainWindow._format_inference_top_factors_summary(inference_summary)
+                if formatted_factors:
+                    self._results_tab.append_text("\n" + formatted_factors)
+
+                factors_export_message = _MainWindow._persist_inference_factors_to_file(
+                    report_payload,
+                    inference_summary,
+                )
+                if factors_export_message:
+                    self._results_tab.append_text("\n" + factors_export_message)
+
+                prediction_payload = _MainWindow._extract_prediction_payload(inference_summary)
+                monthly_prediction_payloads = _MainWindow._extract_monthly_prediction_payloads(inference_summary)
+                if prediction_payload or monthly_prediction_payloads:
+                    persist_message = _MainWindow._persist_inference_to_final_dataset(
+                        report_payload,
+                        prediction_payload=prediction_payload,
+                        monthly_prediction_payloads=monthly_prediction_payloads,
+                    )
+                    if persist_message:
+                        self._results_tab.append_text("\n" + persist_message)
+
+            self._status_label.setText("Run finished")
+        except Exception as exc:
+            # Keep desktop shell alive even if the run payload shape is unexpected.
+            self._results_tab.append_text(f"\n\nRun payload handling failed: {exc}")
+            self._status_label.setText("Run finished with errors")
 
     @staticmethod
     def _extract_prediction_payload(inference_summary: str) -> Optional[Dict[str, float]]:
@@ -425,6 +504,350 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
         return normalized
 
     @staticmethod
+    def _normalize_factor_list(raw_factors: object) -> List[Dict[str, float]]:
+        if not isinstance(raw_factors, list):
+            return []
+
+        normalized: List[Dict[str, float]] = []
+        for item in raw_factors:
+            if not isinstance(item, dict):
+                continue
+            feature = item.get("feature")
+            contribution = item.get("contribution")
+            if feature is None or contribution is None:
+                continue
+            try:
+                normalized.append({"feature": str(feature), "contribution": float(contribution)})
+            except Exception:
+                continue
+        return normalized
+
+    @staticmethod
+    def _split_risk_and_healthy_factors(raw_payload: object) -> tuple[List[Dict[str, float]], List[Dict[str, float]]]:
+        if not isinstance(raw_payload, dict):
+            return [], []
+
+        if any(key in raw_payload for key in ("risk_factors", "healthy_factors", "top_risk_factors", "top_healthy_factors")):
+            risk_factors = _MainWindow._normalize_factor_list(
+                raw_payload.get("risk_factors") if "risk_factors" in raw_payload else raw_payload.get("top_risk_factors")
+            )
+            healthy_factors = _MainWindow._normalize_factor_list(
+                raw_payload.get("healthy_factors") if "healthy_factors" in raw_payload else raw_payload.get("top_healthy_factors")
+            )
+            return risk_factors[:5], healthy_factors[:5]
+
+        combined = _MainWindow._normalize_factor_list(raw_payload.get("top_factors"))
+        risk_candidates = [item for item in combined if item["contribution"] > 0]
+        risk_candidates.sort(key=lambda item: item["contribution"], reverse=True)
+        return risk_candidates[:5], []
+
+    @staticmethod
+    def _average_monthly_prediction_section(monthly: object) -> Optional[Dict[str, object]]:
+        if not isinstance(monthly, dict):
+            return None
+
+        risk_score_total = 0.0
+        saving_probability_total = 0.0
+        month_count = 0
+        risk_totals: Dict[str, List[float]] = {}
+        healthy_totals: Dict[str, List[float]] = {}
+
+        for raw_payload in monthly.values():
+            if not isinstance(raw_payload, dict):
+                continue
+            try:
+                risk_score = float(raw_payload.get("risk_score"))
+                saving_probability = float(raw_payload.get("saving_probability"))
+            except Exception:
+                continue
+
+            month_count += 1
+            risk_score_total += risk_score
+            saving_probability_total += saving_probability
+
+            risk_factors, healthy_factors = _MainWindow._split_risk_and_healthy_factors(raw_payload)
+            for item in risk_factors:
+                bucket = risk_totals.setdefault(item["feature"], [0.0, 0.0])
+                bucket[0] += float(item["contribution"])
+                bucket[1] += 1.0
+            for item in healthy_factors:
+                bucket = healthy_totals.setdefault(item["feature"], [0.0, 0.0])
+                bucket[0] += float(item["contribution"])
+                bucket[1] += 1.0
+
+        if month_count == 0:
+            return None
+
+        averaged_risk = [
+            {"feature": feature, "contribution": round(total / count, 6)}
+            for feature, (total, count) in risk_totals.items()
+            if count > 0
+        ]
+        averaged_healthy = [
+            {"feature": feature, "contribution": round(total / count, 6)}
+            for feature, (total, count) in healthy_totals.items()
+            if count > 0
+        ]
+        averaged_risk.sort(key=lambda item: abs(item["contribution"]), reverse=True)
+        averaged_healthy.sort(key=lambda item: item["contribution"])
+
+        average_risk_score = risk_score_total / month_count
+        average_saving_probability = saving_probability_total / month_count
+        if average_risk_score < 0.33:
+            risk_level = "healthy"
+        elif average_risk_score < 0.67:
+            risk_level = "moderate"
+        else:
+            risk_level = "risky"
+
+        return {
+            "risk_score": round(average_risk_score, 6),
+            "saving_probability": round(average_saving_probability, 6),
+            "risk_level": risk_level,
+            "risk_factors": averaged_risk[:5],
+            "healthy_factors": averaged_healthy[:5],
+        }
+
+    @staticmethod
+    def _average_monthly_prediction_section(monthly: object) -> Optional[Dict[str, object]]:
+        if not isinstance(monthly, dict):
+            return None
+
+        risk_score_total = 0.0
+        saving_probability_total = 0.0
+        month_count = 0
+
+        risk_totals: Dict[str, List[float]] = {}
+        healthy_totals: Dict[str, List[float]] = {}
+
+        for raw_payload in monthly.values():
+            if not isinstance(raw_payload, dict):
+                continue
+            try:
+                risk_score_total += float(raw_payload.get("risk_score"))
+                saving_probability_total += float(raw_payload.get("saving_probability"))
+            except Exception:
+                continue
+
+            month_count += 1
+            risk_factors, healthy_factors = _MainWindow._split_risk_and_healthy_factors(raw_payload)
+            for item in risk_factors:
+                bucket = risk_totals.setdefault(item["feature"], [0.0, 0.0])
+                bucket[0] += float(item["contribution"])
+                bucket[1] += 1.0
+            for item in healthy_factors:
+                bucket = healthy_totals.setdefault(item["feature"], [0.0, 0.0])
+                bucket[0] += float(item["contribution"])
+                bucket[1] += 1.0
+
+        if month_count == 0:
+            return None
+
+        averaged_risk = [
+            {"feature": feature, "contribution": round(total / count, 6)}
+            for feature, (total, count) in risk_totals.items()
+            if count > 0
+        ]
+        averaged_healthy = [
+            {"feature": feature, "contribution": round(total / count, 6)}
+            for feature, (total, count) in healthy_totals.items()
+            if count > 0
+        ]
+        averaged_risk.sort(key=lambda item: abs(item["contribution"]), reverse=True)
+        averaged_healthy.sort(key=lambda item: item["contribution"])
+
+        average_risk_score = risk_score_total / month_count
+        average_saving_probability = saving_probability_total / month_count
+
+        if average_risk_score < 0.33:
+            risk_level = "healthy"
+        elif average_risk_score < 0.67:
+            risk_level = "moderate"
+        else:
+            risk_level = "risky"
+
+        return {
+            "risk_score": round(average_risk_score, 6),
+            "saving_probability": round(average_saving_probability, 6),
+            "risk_level": risk_level,
+            "risk_factors": averaged_risk[:5],
+            "healthy_factors": averaged_healthy[:5],
+        }
+
+    @staticmethod
+    def _format_factor_lines(title: str, factors: List[Dict[str, float]]) -> List[str]:
+        lines = [title]
+        if not factors:
+            lines.append("  (none)")
+            return lines
+
+        for index, factor in enumerate(factors[:5], start=1):
+            lines.append(f"  {index}. {factor['feature']}: {float(factor['contribution']):.6f}")
+        return lines
+
+    @staticmethod
+    def _build_inference_factor_export_payload(inference_summary: str) -> Optional[Dict[str, object]]:
+        try:
+            parsed = json.loads(inference_summary)
+        except Exception:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+
+        current_risk, current_healthy = _MainWindow._split_risk_and_healthy_factors(parsed)
+        monthly_payloads: Dict[str, Dict[str, object]] = {}
+        monthly = parsed.get("monthly_predictions")
+        if isinstance(monthly, dict):
+            for month_key, raw_payload in monthly.items():
+                if not isinstance(raw_payload, dict):
+                    continue
+                month_risk, month_healthy = _MainWindow._split_risk_and_healthy_factors(raw_payload)
+                monthly_payloads[str(month_key)] = {
+                    "risk_score": raw_payload.get("risk_score"),
+                    "saving_probability": raw_payload.get("saving_probability"),
+                    "risk_level": raw_payload.get("risk_level"),
+                    "risk_factors": month_risk,
+                    "healthy_factors": month_healthy,
+                }
+
+        return {
+            "current_prediction": {
+                "risk_score": parsed.get("risk_score"),
+                "saving_probability": parsed.get("saving_probability"),
+                "risk_level": parsed.get("risk_level"),
+                "risk_factors": current_risk,
+                "healthy_factors": current_healthy,
+            },
+            "monthly_predictions": monthly_payloads,
+        }
+
+    @staticmethod
+    def _persist_inference_factors_to_file(
+        report_payload: Dict[str, object],
+        inference_summary: str,
+    ) -> Optional[str]:
+        payload = _MainWindow._build_inference_factor_export_payload(inference_summary)
+        if not payload:
+            return None
+
+        output_files = report_payload.get("output_files")
+        if not isinstance(output_files, dict):
+            return None
+
+        final_dataset_path = output_files.get("final_dataset")
+        if not isinstance(final_dataset_path, str) or not final_dataset_path.strip():
+            return None
+
+        export_dir = os.path.dirname(final_dataset_path)
+        if not export_dir:
+            return None
+
+        factors_path = os.path.join(export_dir, "inference_factors.txt")
+        factors_text = _MainWindow._format_inference_factor_export_text(payload)
+        with open(factors_path, "w", encoding="utf-8") as handle:
+            handle.write(factors_text)
+
+        output_files["inference_factors"] = factors_path
+
+        run_report_path = output_files.get("run_report")
+        if isinstance(run_report_path, str) and run_report_path.strip():
+            try:
+                with open(run_report_path, "w", encoding="utf-8") as handle:
+                    json.dump(report_payload, handle, indent=2, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                pass
+
+        return f"Inference factors exported to {factors_path}"
+
+    @staticmethod
+    def _format_inference_factor_export_text(payload: Dict[str, object]) -> str:
+        lines: List[str] = []
+
+        def _append_prediction_block(title: str, section: object) -> None:
+            if not isinstance(section, dict):
+                return
+            lines.append(title)
+            lines.append(f"  risk_score: {section.get('risk_score')}")
+            lines.append(f"  saving_probability: {section.get('saving_probability')}")
+            lines.append(f"  risk_level: {section.get('risk_level')}")
+            risk_factors, healthy_factors = _MainWindow._split_risk_and_healthy_factors(section)
+            lines.extend(_MainWindow._format_factor_lines("  Risk factors:", risk_factors))
+            lines.extend(_MainWindow._format_factor_lines("  Healthy/stable factors:", healthy_factors))
+            lines.append("")
+
+        if not isinstance(payload, dict):
+            return ""
+
+        monthly = payload.get("monthly_predictions")
+        general_section = _MainWindow._average_monthly_prediction_section(monthly)
+        if general_section is None:
+            _append_prediction_block("Current prediction", payload.get("current_prediction"))
+        else:
+            _append_prediction_block("Average monthly prediction", general_section)
+            lines.append("Note: the general section is the arithmetic mean of the monthly predictions.")
+            lines.append("")
+
+        if isinstance(monthly, dict) and monthly:
+            lines.append("Monthly predictions")
+            for month_key in sorted(monthly.keys()):
+                _append_prediction_block(f"- {month_key}", monthly.get(month_key))
+
+        text = "\n".join(lines).strip()
+        return text + ("\n" if text else "")
+
+    @staticmethod
+    def _format_inference_top_factors_summary(inference_summary: str) -> str:
+        try:
+            parsed = json.loads(inference_summary)
+        except Exception:
+            return ""
+        if not isinstance(parsed, dict):
+            return ""
+
+        sections: List[str] = []
+
+        monthly = parsed.get("monthly_predictions")
+        general_section = _MainWindow._average_monthly_prediction_section(monthly)
+        if general_section is None:
+            current_risk, current_healthy = _MainWindow._split_risk_and_healthy_factors(parsed)
+            sections.extend(_MainWindow._format_factor_lines("Top 5 risk factors - current prediction:", current_risk))
+            sections.extend(
+                _MainWindow._format_factor_lines(
+                    "Top 5 healthy behavior factors - current prediction:",
+                    current_healthy,
+                )
+            )
+        else:
+            sections.extend(_MainWindow._format_factor_lines("Top 5 risk factors - average monthly prediction:", general_section.get("risk_factors", [])))
+            sections.extend(
+                _MainWindow._format_factor_lines(
+                    "Top 5 healthy behavior factors - average monthly prediction:",
+                    general_section.get("healthy_factors", []),
+                )
+            )
+
+        if isinstance(monthly, dict):
+            for month_key in sorted(monthly.keys()):
+                raw_payload = monthly.get(month_key)
+                if not isinstance(raw_payload, dict):
+                    continue
+                month_risk, month_healthy = _MainWindow._split_risk_and_healthy_factors(raw_payload)
+                sections.extend(
+                    _MainWindow._format_factor_lines(
+                        f"Top 5 risk factors - {month_key}:",
+                        month_risk,
+                    )
+                )
+                sections.extend(
+                    _MainWindow._format_factor_lines(
+                        f"Top 5 healthy behavior factors - {month_key}:",
+                        month_healthy,
+                    )
+                )
+
+        return "\n".join(sections)
+
+    @staticmethod
     def _persist_inference_to_final_dataset(
         report_payload: Dict[str, object],
         prediction_payload: Optional[Dict[str, float]] = None,
@@ -453,9 +876,25 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
         if not fallback_payload and not monthly_payloads:
             return None
 
+        def _canonicalize_prediction_keys(payload: Mapping[str, float]) -> Dict[str, float]:
+            canonical: Dict[str, float] = {}
+            for key, value in payload.items():
+                canonical_key = "Risk_Score" if str(key) == "risk_score" else str(key)
+                if canonical_key in {"Risk_Score", "saving_probability"}:
+                    canonical[canonical_key] = float(value)
+            return canonical
+
+        fallback_payload = _canonicalize_prediction_keys(fallback_payload)
+        monthly_payloads = {
+            month_key: _canonicalize_prediction_keys(payload)
+            for month_key, payload in monthly_payloads.items()
+        }
+
         target_columns = set(fallback_payload.keys())
         for payload in monthly_payloads.values():
             target_columns.update(payload.keys())
+        if "Risk_Score" in target_columns:
+            target_columns.add("Behavior_Risk_Level")
 
         for column in sorted(target_columns):
             if column not in existing_columns:
@@ -467,6 +906,11 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
             for column in target_columns:
                 if column in row_payload:
                     row[column] = str(row_payload[column])
+            if "Risk_Score" in row:
+                try:
+                    row["Behavior_Risk_Level"] = classify_behavior_risk_level(float(row["Risk_Score"]))
+                except Exception:
+                    pass
 
         with open(final_dataset_path, "w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=existing_columns)
@@ -489,6 +933,7 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
 
     def _on_run_thread_finished(self) -> None:
         self._current_run_worker = None
+        self._current_run_bridge = None
         self._current_run_thread = None
         self._set_processing(False)
 
@@ -559,14 +1004,24 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
                 monthly_predictions[str(month_key)] = {
                     "risk_score": monthly_prediction.risk_score,
                     "saving_probability": monthly_prediction.saving_probability,
+                    "risk_level": monthly_prediction.risk_level,
+                    "inputs_scaled": monthly_prediction.inputs_scaled,
+                    "top_factors": monthly_prediction.top_factors,
+                    "risk_factors": monthly_prediction.risk_factors,
+                    "healthy_factors": monthly_prediction.healthy_factors,
                 }
 
         return json.dumps(
             {
                 "risk_score": prediction.risk_score,
                 "saving_probability": prediction.saving_probability,
+                "risk_level": prediction.risk_level,
+                "inputs_scaled": prediction.inputs_scaled,
+                "scaled_feature_columns": prediction.scaled_feature_columns,
                 "alerts": prediction.alerts,
                 "top_factors": prediction.top_factors,
+                "risk_factors": prediction.risk_factors,
+                "healthy_factors": prediction.healthy_factors,
                 "monthly_predictions": monthly_predictions,
             },
             indent=2,

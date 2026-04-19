@@ -19,7 +19,11 @@ class FeatureAssemblerTests(unittest.TestCase):
 
         result = assembler.assemble(statement_features=statement, profile_answers=profile)
         self.assertEqual(result.row.ordered_columns, feature_columns)
-        self.assertEqual(result.row.as_ordered_list(), [25.5, 1.0, 0.0])
+        self.assertEqual(result.row.as_ordered_list(), [1.0, 1.0, 0.0])
+
+        statement_low = ProcessedStatementFeatures.from_mapping({"Expense_Distribution_Food": 4.9})
+        result_low = assembler.assemble(statement_features=statement_low, profile_answers=profile)
+        self.assertEqual(result_low.row.as_ordered_list(), [0.0, 1.0, 0.0])
 
         with self.assertRaises(ValueError):
             assembler.assemble(

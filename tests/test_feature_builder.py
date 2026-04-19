@@ -5,10 +5,88 @@ from src.features.feature_builder import (
     FINAL_DATASET_COLUMNS,
     build_feature_vector,
     build_final_dataset_row,
+    classify_behavior_risk_level,
 )
 
 
 class FeatureBuilderTests(unittest.TestCase):
+    def test_final_dataset_column_order_matches_processing_contract(self):
+        expected_order = [
+            "Age",
+            "Income_Category",
+            "Essential_Needs_Percentage",
+            "Product_Lifetime_Clothing",
+            "Product_Lifetime_Tech",
+            "Product_Lifetime_Appliances",
+            "Product_Lifetime_Cars",
+            "Impulse_Buying_Frequency",
+            "Debt_Level",
+            "Bank_Account_Analysis_Frequency",
+            "Savings_Goal_Major_Purchases",
+            "Savings_Goal_Retirement",
+            "Savings_Goal_Emergency_Fund",
+            "Savings_Goal_Child_Education",
+            "Savings_Goal_Vacation",
+            "Savings_Goal_Other",
+            "Savings_Obstacle_Other",
+            "Savings_Obstacle_Insufficient_Income",
+            "Savings_Obstacle_Other_Expenses",
+            "Savings_Obstacle_Not_Priority",
+            "Expense_Distribution_Food",
+            "Expense_Distribution_Housing",
+            "Expense_Distribution_Transport",
+            "Expense_Distribution_Entertainment",
+            "Expense_Distribution_Health",
+            "Expense_Distribution_Personal_Care",
+            "Expense_Distribution_Child_Education",
+            "Expense_Distribution_Other",
+            "Credit_Usage_Essential_Needs",
+            "Credit_Usage_Major_Purchases",
+            "Credit_Usage_Unexpected_Expenses",
+            "Credit_Usage_Personal_Needs",
+            "Credit_Usage_Never_Used",
+            "Family_Status_Another",
+            "Family_Status_In a relationship/married with children",
+            "Family_Status_In a relationship/married without children",
+            "Family_Status_Single, no children",
+            "Family_Status_Single, with children",
+            "Gender_Female",
+            "Gender_Male",
+            "Gender_Prefer not to say",
+            "Financial_Attitude_I am disciplined in saving",
+            "Financial_Attitude_I try to find a balance",
+            "Financial_Attitude_Spend more than I earn",
+            "Budget_Planning_Don't plan at all",
+            "Budget_Planning_Plan budget in detail",
+            "Budget_Planning_Plan only essentials",
+            "Save_Money_No",
+            "Save_Money_Yes",
+            "Impulse_Buying_Category_Clothing or personal care products",
+            "Impulse_Buying_Category_Electronics or gadgets",
+            "Impulse_Buying_Category_Entertainment",
+            "Impulse_Buying_Category_Food",
+            "Impulse_Buying_Category_Other",
+            "Impulse_Buying_Reason_Discounts or promotions",
+            "Impulse_Buying_Reason_Other",
+            "Impulse_Buying_Reason_Self-reward",
+            "Impulse_Buying_Reason_Social pressure",
+            "Financial_Investments_No, but interested",
+            "Financial_Investments_No, not interested",
+            "Financial_Investments_Yes, occasionally",
+            "Financial_Investments_Yes, regularly",
+            "Risk_Score",
+            "Behavior_Risk_Level",
+        ]
+
+        self.assertEqual(FINAL_DATASET_COLUMNS, expected_order)
+
+    def test_behavior_risk_level_uses_english_labels(self):
+        self.assertEqual(classify_behavior_risk_level(-0.11), "Healthy")
+        self.assertEqual(classify_behavior_risk_level(-0.10), "Healthy")
+        self.assertEqual(classify_behavior_risk_level(-0.09), "Moderate")
+        self.assertEqual(classify_behavior_risk_level(0.20), "Moderate")
+        self.assertEqual(classify_behavior_risk_level(0.21), "Risky")
+
     def test_feature_vector_has_fixed_columns_and_order(self):
         totals = {
             "food_total": 100.0,
@@ -83,11 +161,11 @@ class FeatureBuilderTests(unittest.TestCase):
         )
         row = build_final_dataset_row(features)
         self.assertEqual(list(row.keys()), FINAL_DATASET_COLUMNS)
-        self.assertAlmostEqual(row["Expense_Distribution_Food"], 50.0, places=4)
-        self.assertAlmostEqual(row["Expense_Distribution_Housing"], 25.0, places=4)
-        self.assertAlmostEqual(row["Expense_Distribution_Transport"], 25.0, places=4)
+        self.assertEqual(row["Expense_Distribution_Food"], 1)
+        self.assertEqual(row["Expense_Distribution_Housing"], 1)
+        self.assertEqual(row["Expense_Distribution_Transport"], 1)
         self.assertAlmostEqual(row["Essential_Needs_Percentage"], 100.0, places=4)
-        self.assertEqual(row["Impulse_Buying_Category_Electronics or gadgets"], 1.0)
+        self.assertEqual(row["Impulse_Buying_Category_Electronics or gadgets"], 1)
         self.assertIsNone(row["Age"])
 
     def test_electronics_impulse_feature_defaults_to_zero_without_signal(self):
@@ -125,9 +203,9 @@ class FeatureBuilderTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(features["Save_Money_Yes"], 1.0)
-        self.assertEqual(features["Save_Money_No"], 0.0)
-        self.assertEqual(features["Impulse_Buying_Frequency"], 2.0)
+        self.assertEqual(features["Save_Money_Yes"], 1)
+        self.assertEqual(features["Save_Money_No"], 0)
+        self.assertEqual(features["Impulse_Buying_Frequency"], 2)
         self.assertEqual(features["Impulse_Buying_Category_Electronics or gadgets"], 1.0)
         self.assertEqual(features["Impulse_Buying_Category_Food"], 0.0)
         self.assertEqual(features["Impulse_Buying_Category_Entertainment"], 0.0)
@@ -196,6 +274,13 @@ class FeatureBuilderTests(unittest.TestCase):
     def test_zero_total_returns_zeroes(self):
         features = build_feature_vector({})
         self.assertTrue(all(value == 0.0 for value in features.values()))
+
+    def test_behavior_risk_level_uses_requested_thresholds(self):
+        self.assertEqual(classify_behavior_risk_level(-0.11), "Healthy")
+        self.assertEqual(classify_behavior_risk_level(-0.10), "Healthy")
+        self.assertEqual(classify_behavior_risk_level(-0.09), "Moderate")
+        self.assertEqual(classify_behavior_risk_level(0.20), "Moderate")
+        self.assertEqual(classify_behavior_risk_level(0.21), "Risky")
 
 
 if __name__ == "__main__":

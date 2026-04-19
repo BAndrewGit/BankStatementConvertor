@@ -1,5 +1,4 @@
 from .model_artifact_loader import ModelArtifactLoader, ModelArtifacts
-from .predictor import Predictor, PredictionResult
 
 __all__ = [
     "ModelArtifactLoader",
@@ -7,4 +6,13 @@ __all__ = [
     "Predictor",
     "PredictionResult",
 ]
+
+
+def __getattr__(name: str):
+    if name in {"Predictor", "PredictionResult"}:
+        from .predictor import PredictionResult, Predictor
+
+        return {"Predictor": Predictor, "PredictionResult": PredictionResult}[name]
+    raise AttributeError(name)
+
 

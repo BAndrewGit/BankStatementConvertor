@@ -1,6 +1,7 @@
 [
   "Age",
   "Income_Category",
+  "Essential_Needs_Percentage",
   "Product_Lifetime_Clothing",
   "Product_Lifetime_Tech",
   "Product_Lifetime_Appliances",

@@ -60,6 +60,8 @@ class QuestionnaireTests(unittest.TestCase):
         for group_name, options in QUESTION_GROUPS.items():
             values = [one_hot[column] for column in options.values()]
             self.assertEqual(sum(values), 1.0, msg=f"Group {group_name} must be one-hot")
+            for value in values:
+                self.assertIsInstance(value, int)
 
     def test_schema_validation_detects_missing_questionnaire_columns(self):
         full_columns = [col for options in PROFILE_FEATURE_GROUPS.values() for col in options]
@@ -97,8 +99,8 @@ class QuestionnaireTests(unittest.TestCase):
         self.assertEqual(encoded["Savings_Goal_Retirement"], 0.0)
         self.assertEqual(encoded["Credit_Usage_Essential_Needs"], 1.0)
         self.assertEqual(encoded["Credit_Usage_Major_Purchases"], 0.0)
-        self.assertEqual(encoded["Debt_Level"], 2.0)
-        self.assertEqual(encoded["Bank_Account_Analysis_Frequency"], 2.0)
+        self.assertEqual(encoded["Debt_Level"], 2)
+        self.assertEqual(encoded["Bank_Account_Analysis_Frequency"], 2)
         self.assertNotIn("Income_Category", encoded)
 
         for field_name in REQUIRED_NUMERIC_FEATURES:
