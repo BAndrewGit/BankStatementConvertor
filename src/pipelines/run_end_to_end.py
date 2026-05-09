@@ -7,6 +7,7 @@ from hashlib import sha256
 import json
 import os
 import re
+from types import SimpleNamespace
 from time import perf_counter
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -16,6 +17,7 @@ from src.features.expense_aggregator import aggregate_expenses
 from src.features.quality_metrics import QualityMetrics, compute_quality_metrics
 from src.infrastructure.cache import CacheRepository, FileCacheRepository
 from src.memory.entity_memory import EntityMemoryRepository
+from src.inference.artifact_paths import get_default_artifacts_dir
 from src.pipelines.build_features import build_features
 from src.pipelines.classify_transactions import classify_parsed_transactions
 from src.pipelines.parse_statement import parse_statement
@@ -359,13 +361,14 @@ def _predict_risk_score_for_row(
         return None
 
     ordered_columns, predictor = export_scaler
-    if not hasattr(predictor, "predict"):
+    prediction_predictor = getattr(predictor, "prediction_predictor", predictor)
+    if not hasattr(prediction_predictor, "predict"):
         return None
 
     try:
         inference_values = {column: float(row.get(column, 0.0)) for column in ordered_columns}
         inference_row = InferenceInputRow.from_values(inference_values, ordered_columns)
-        prediction = predictor.predict(inference_row)
+        prediction = prediction_predictor.predict(inference_row)
         risk_score = getattr(prediction, "risk_score", None)
         if risk_score is None:
             return None
@@ -398,18 +401,36 @@ def _build_prediction_source(
 
 
 def _build_export_scaler(artifacts_dir: Optional[str]) -> Optional[Tuple[List[str], Any]]:
-    if not artifacts_dir:
-        return None
+    resolved_artifacts_dir = str(artifacts_dir or "").strip() or get_default_artifacts_dir()
 
     try:
         from src.inference.model_artifact_loader import ModelArtifactLoader
         from src.inference.predictor import Predictor
 
-        artifacts = ModelArtifactLoader(artifacts_dir).load(require_multitask=False)
-    except Exception:
-        return None
+        loader = ModelArtifactLoader(resolved_artifacts_dir)
+        scaling_context = loader.load_scaling_context()
+        scaling_artifacts = SimpleNamespace(
+            artifacts_dir=scaling_context["artifacts_dir"],
+            model=None,
+            scaler=scaling_context["scaler"],
+            feature_columns=scaling_context["feature_columns"],
+            thresholds=scaling_context["thresholds"],
+            model_metadata=scaling_context["model_metadata"],
+            bank_mapping_rules=scaling_context["bank_mapping_rules"],
+        )
+        export_predictor = Predictor(scaling_artifacts)
 
-    return list(artifacts.feature_columns), Predictor(artifacts)
+        try:
+            artifacts = loader.load(require_multitask=False)
+            setattr(export_predictor, "prediction_predictor", Predictor(artifacts))
+        except Exception:
+            pass
+    except Exception as exc:
+        raise RuntimeError(
+            "Unable to load export artifacts for final_dataset.csv"
+        ) from exc
+
+    return list(scaling_context["feature_columns"]), export_predictor
 
 
 def _scale_final_dataset_row(
@@ -430,7 +451,7 @@ def _scale_final_dataset_row(
     try:
         scaled_values = predictor.scale_ordered_values(ordered_values)
     except Exception:
-        return row
+        raise RuntimeError("Unable to scale final_dataset.csv row") from None
 
     scaled_row = dict(row)
     for index, column in enumerate(ordered_columns):

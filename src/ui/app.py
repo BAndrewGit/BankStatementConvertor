@@ -5,13 +5,14 @@ import json
 import logging
 import os
 import traceback
-from typing import Dict, List, Optional
+from typing import Dict, List, Mapping, Optional
 
 from src.domain.inference_contracts import (
     ProcessedStatementFeatures,
     ProfileAnswers,
     build_feature_source_map,
 )
+from src.inference.artifact_paths import get_default_artifacts_dir as resolve_default_artifacts_dir
 from src.features.feature_assembler import FeatureAssembler
 from src.features.feature_builder import classify_behavior_risk_level
 from src.inference.model_artifact_loader import ModelArtifactLoader
@@ -33,9 +34,7 @@ from src.profile.questionnaire import (
 )
 
 
-DEFAULT_ARTIFACTS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "model_artifacts")
-)
+DEFAULT_ARTIFACTS_DIR = resolve_default_artifacts_dir()
 _DESKTOP_LOG_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "logs", "desktop_ui_runtime.log")
 )
@@ -147,7 +146,7 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
 
         self._profile_store = ProfileStore()
         self._active_profile_id: Optional[str] = None
-        self._active_artifacts_dir: str = ""
+        self._active_artifacts_dir: str = DEFAULT_ARTIFACTS_DIR
         self._last_run_payload: Dict[str, object] = {}
         self._current_run_thread = None
         self._current_run_worker = None
@@ -295,19 +294,20 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
 
                 def run(self) -> None:
                     try:
+                        artifacts_dir = self._artifacts_dir or DEFAULT_ARTIFACTS_DIR
                         if len(self._paths) == 1:
                             run_result = run_end_to_end(
                                 pdf_path=self._paths[0],
                                 export_dir=self._export_path,
                                 profile_answers=self._questionnaire_answers,
-                                artifacts_dir=self._artifacts_dir or None,
+                                artifacts_dir=artifacts_dir,
                             )
                         else:
                             run_result = run_end_to_end_many(
                                 pdf_paths=self._paths,
                                 export_dir=self._export_path,
                                 profile_answers=self._questionnaire_answers,
-                                artifacts_dir=self._artifacts_dir or None,
+                                artifacts_dir=artifacts_dir,
                             )
 
                         report_data = run_result.to_dict()
@@ -341,7 +341,7 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
                 list(pdf_paths),
                 output_dir,
                 profile_answers,
-                getattr(self, "_active_artifacts_dir", ""),
+                getattr(self, "_active_artifacts_dir", "") or DEFAULT_ARTIFACTS_DIR,
             )
             bridge = _UiBridge(self._qt_window)
             worker.moveToThread(thread)
@@ -945,7 +945,8 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
         if not isinstance(raw_features, dict):
             return "Skipped: report has no feature payload"
 
-        loader = ModelArtifactLoader(self._active_artifacts_dir)
+        artifacts_dir = self._active_artifacts_dir or DEFAULT_ARTIFACTS_DIR
+        loader = ModelArtifactLoader(artifacts_dir)
         try:
             artifacts = loader.load(require_multitask=True)
         except Exception as exc:
@@ -978,7 +979,10 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
         monthly_predictions: Dict[str, Dict[str, float]] = {}
         raw_features_by_month = report_payload.get("features_by_month")
         if isinstance(raw_features_by_month, dict):
-            income_by_month = _MainWindow._load_income_by_month_from_final_dataset(report_payload)
+            income_by_month = _MainWindow._load_income_by_month_from_final_dataset(
+                report_payload,
+                artifacts_dir=self._active_artifacts_dir or DEFAULT_ARTIFACTS_DIR,
+            )
             for month_key, monthly_features in raw_features_by_month.items():
                 if not isinstance(monthly_features, dict):
                     continue
@@ -1069,13 +1073,37 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
         return merged
 
     @staticmethod
-    def _load_income_by_month_from_final_dataset(report_payload: Dict[str, object]) -> Dict[str, float]:
+    def _load_income_by_month_from_final_dataset(
+        report_payload: Dict[str, object],
+        artifacts_dir: Optional[str] = None,
+    ) -> Dict[str, float]:
         output_files = report_payload.get("output_files")
         if not isinstance(output_files, dict):
             return {}
         final_dataset_path = output_files.get("final_dataset")
         if not isinstance(final_dataset_path, str) or not os.path.exists(final_dataset_path):
             return {}
+
+        income_scale = None
+        income_mean = None
+        if artifacts_dir:
+            try:
+                loader = ModelArtifactLoader(artifacts_dir)
+                scaling_context = loader.load_scaling_context()
+                scaler = scaling_context.get("scaler")
+                feature_columns = list(scaling_context.get("feature_columns") or [])
+                if (
+                    scaler is not None
+                    and "Income_Category" in feature_columns
+                    and hasattr(scaler, "mean_")
+                    and hasattr(scaler, "scale_")
+                ):
+                    income_index = feature_columns.index("Income_Category")
+                    income_mean = float(scaler.mean_[income_index])
+                    income_scale = float(scaler.scale_[income_index]) or 1.0
+            except Exception:
+                income_scale = None
+                income_mean = None
 
         by_month: Dict[str, float] = {}
         with open(final_dataset_path, encoding="utf-8", newline="") as handle:
@@ -1086,7 +1114,10 @@ class _MainWindow:  # pragma: no cover - covered by integration usage, not unit 
                 if not month_key or raw_income in (None, ""):
                     continue
                 try:
-                    by_month[month_key] = float(raw_income)
+                    income_value = float(raw_income)
+                    if income_scale is not None and income_mean is not None and abs(income_value) <= 20.0:
+                        income_value = income_value * income_scale + income_mean
+                    by_month[month_key] = income_value
                 except Exception:
                     continue
         return by_month

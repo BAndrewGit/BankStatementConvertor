@@ -2,6 +2,10 @@ import unittest
 
 from src.domain.inference_contracts import (
     InferenceInputRow,
+    MODEL_CONTRACT_PATH,
+    MODEL_FEATURE_COLUMNS,
+    MODEL_INPUT_DIM,
+    MODEL_SCALED_FEATURE_COLUMNS,
     SOURCE_IGNORE,
     SOURCE_PROGRAM,
     SOURCE_QUESTIONNAIRE,
@@ -48,6 +52,26 @@ class InferenceContractsTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             InferenceInputRow.from_projected_values({"a": 1.0}, ordered)
+
+    def test_shared_model_contract_matches_current_bundle_standard(self):
+        self.assertTrue(MODEL_CONTRACT_PATH.is_file())
+        self.assertEqual(MODEL_INPUT_DIM, len(MODEL_FEATURE_COLUMNS))
+        self.assertEqual(MODEL_INPUT_DIM, 55)
+        self.assertEqual(len(MODEL_SCALED_FEATURE_COLUMNS), 7)
+        self.assertIn("Essential_Needs_Percentage", MODEL_FEATURE_COLUMNS)
+        self.assertNotIn("Savings_Obstacle_Insufficient_Income", MODEL_FEATURE_COLUMNS)
+        self.assertEqual(
+            MODEL_SCALED_FEATURE_COLUMNS,
+            [
+                "Age",
+                "Income_Category",
+                "Essential_Needs_Percentage",
+                "Product_Lifetime_Clothing",
+                "Product_Lifetime_Tech",
+                "Product_Lifetime_Appliances",
+                "Product_Lifetime_Cars",
+            ],
+        )
 
 
 if __name__ == "__main__":

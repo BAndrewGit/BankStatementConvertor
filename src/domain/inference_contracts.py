@@ -1,13 +1,44 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import math
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Mapping, Sequence
 
 
 SOURCE_PROGRAM = "program_2"
 SOURCE_QUESTIONNAIRE = "questionnaire"
 SOURCE_IGNORE = "ignore"
+
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+MODEL_CONTRACT_PATH = WORKSPACE_ROOT / "model_contract.json"
+
+
+@lru_cache(maxsize=1)
+def load_model_contract() -> Dict[str, object]:
+    """Load the shared model input contract from the workspace root."""
+
+    if not MODEL_CONTRACT_PATH.is_file():
+        raise FileNotFoundError(f"Missing shared model contract: {MODEL_CONTRACT_PATH}")
+
+    with MODEL_CONTRACT_PATH.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    if not isinstance(payload, dict):
+        raise ValueError(f"Shared model contract must be a JSON object: {MODEL_CONTRACT_PATH}")
+
+    return payload
+
+
+def _read_string_list(contract: Mapping[str, object], key: str) -> List[str]:
+    value = contract.get(key)
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+        raise ValueError(f"Shared model contract field '{key}' is invalid: {MODEL_CONTRACT_PATH}")
+    if len(set(value)) != len(value):
+        raise ValueError(f"Shared model contract field '{key}' contains duplicates: {MODEL_CONTRACT_PATH}")
+    return list(value)
 
 # Features produced by statement processing.
 PROGRAM_FEATURES = {
@@ -78,6 +109,32 @@ QUESTIONNAIRE_FEATURES = {
     "Financial_Investments_Yes, occasionally",
     "Financial_Investments_Yes, regularly",
 }
+
+
+MODEL_CONTRACT = load_model_contract()
+MODEL_FEATURE_COLUMNS = _read_string_list(MODEL_CONTRACT, "feature_columns")
+MODEL_SCALED_FEATURE_COLUMNS = _read_string_list(MODEL_CONTRACT, "scaled_feature_columns")
+MODEL_INPUT_DIM = int(MODEL_CONTRACT.get("input_dim", len(MODEL_FEATURE_COLUMNS)))
+MODEL_SCALER_MODE = str(MODEL_CONTRACT.get("scaler_mode", "selected_columns"))
+
+if MODEL_INPUT_DIM != len(MODEL_FEATURE_COLUMNS):
+    raise ValueError(
+        "Shared model contract input_dim does not match feature_columns length: "
+        f"{MODEL_INPUT_DIM} != {len(MODEL_FEATURE_COLUMNS)}"
+    )
+
+if MODEL_SCALER_MODE != "selected_columns":
+    raise ValueError(
+        "Shared model contract must declare scaler_mode='selected_columns' "
+        f"(found {MODEL_SCALER_MODE!r})"
+    )
+
+missing_scaled = [column for column in MODEL_SCALED_FEATURE_COLUMNS if column not in MODEL_FEATURE_COLUMNS]
+if missing_scaled:
+    raise ValueError(
+        "Shared model contract scaled_feature_columns are not a subset of feature_columns: "
+        f"{missing_scaled}"
+    )
 
 
 @dataclass(frozen=True)

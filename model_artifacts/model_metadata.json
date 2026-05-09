@@ -9,6 +9,17 @@
     "dropout": 0.3,
     "activation": "relu"
   },
+  "input_dim": 55,
+  "scaled_feature_columns": [
+    "Age",
+    "Income_Category",
+    "Essential_Needs_Percentage",
+    "Product_Lifetime_Clothing",
+    "Product_Lifetime_Tech",
+    "Product_Lifetime_Appliances",
+    "Product_Lifetime_Cars"
+  ],
+  "scaler_mode": "selected_columns",
   "source_run": "runs\\multitask_ablation_20260405_150048_608799b0",
   "selection_report": {
     "spearman_ok": false,

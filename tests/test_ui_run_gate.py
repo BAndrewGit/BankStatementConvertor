@@ -254,6 +254,45 @@ class DesktopRunGateTests(unittest.TestCase):
             self.assertEqual(run_report["output_files"]["inference_factors"], factors_path)
             status_label.setText.assert_called_with("Run finished")
 
+    def test_load_income_by_month_handles_scaled_final_dataset_values(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dataset_path = os.path.join(temp_dir, "final_dataset.csv")
+            with open(dataset_path, "w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=["statement_month", "Income_Category"],
+                )
+                writer.writeheader()
+                writer.writerow({"statement_month": "2026-02", "Income_Category": "1.5"})
+                writer.writerow({"statement_month": "2026-03", "Income_Category": "6500.0"})
+
+            report_payload = {
+                "output_files": {
+                    "final_dataset": dataset_path,
+                }
+            }
+            fake_scaler = SimpleNamespace(
+                mean_=[0.0, 5000.0],
+                scale_=[1.0, 1000.0],
+            )
+            fake_context = {
+                "artifacts_dir": temp_dir,
+                "scaler": fake_scaler,
+                "feature_columns": ["Age", "Income_Category"],
+                "thresholds": {},
+                "model_metadata": {},
+                "bank_mapping_rules": {},
+            }
+
+            with patch("src.ui.app.ModelArtifactLoader.load_scaling_context", return_value=fake_context):
+                by_month = _MainWindow._load_income_by_month_from_final_dataset(
+                    report_payload,
+                    artifacts_dir=temp_dir,
+                )
+
+            self.assertEqual(by_month["2026-02"], 6500.0)
+            self.assertEqual(by_month["2026-03"], 6500.0)
+
     def test_handle_run_payload_survives_malformed_output_files(self):
         results_tab = Mock()
         status_label = Mock()

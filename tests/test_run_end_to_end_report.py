@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.domain.models import Transaction
+from src.domain.inference_contracts import MODEL_SCALED_FEATURE_COLUMNS
 from src.features.feature_builder import FEATURE_COLUMNS, FINAL_DATASET_COLUMNS
 from src.infrastructure.cache import InMemoryCacheRepository
 from src.pipelines.run_end_to_end import run_end_to_end, run_end_to_end_many
@@ -122,7 +123,7 @@ class RunEndToEndReportTests(unittest.TestCase):
             header_columns = list(header or [])
             self.assertEqual(header_columns, FINAL_DATASET_COLUMNS)
             self.assertIn("Income_Category", header_columns)
-            self.assertEqual(row["Income_Category"], "0.0")
+            self.assertAlmostEqual(float(row["Income_Category"]), -1.4104139991321198)
             self.assertEqual(row["Gender_Male"], "1")
 
     def test_batch_run_writes_monthly_dataset_for_multiple_pdfs(self):
@@ -214,7 +215,10 @@ class RunEndToEndReportTests(unittest.TestCase):
                 rows = list(csv.DictReader(handle))
             self.assertEqual([row["statement_month"] for row in rows], ["2026-02", "2026-03"])
             self.assertEqual([row["Gender_Female"] for row in rows], ["1", "1"])
-            self.assertEqual([row["Income_Category"] for row in rows], ["0.0", "0.0"])
+            self.assertEqual(
+                [float(row["Income_Category"]) for row in rows],
+                [-1.4104139991321198, -1.4104139991321198],
+            )
 
             with open(result.run_report_path, encoding="utf-8") as handle:
                 payload = json.load(handle)
@@ -294,6 +298,121 @@ class RunEndToEndReportTests(unittest.TestCase):
             self.assertEqual(row["Income_Category"], "0.0")
             self.assertEqual(row["Risk_Score"], "0.77")
             self.assertEqual(row["Behavior_Risk_Level"], "Risky")
+
+    def test_run_uses_default_bundle_when_artifacts_dir_is_blank(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = os.path.join(temp_dir, "fixed.pdf")
+            with open(pdf_path, "wb") as handle:
+                handle.write(b"%PDF-1.4\nreport-test\n")
+
+            parsed = [
+                Transaction(
+                    transaction_id="1",
+                    booking_date="2026-03-01",
+                    amount=100.0,
+                    currency="RON",
+                    direction="debit",
+                    raw_description="POS MEGAIMAGE",
+                    source_section="booked_transactions",
+                )
+            ]
+            classified = [
+                Transaction(
+                    transaction_id="1",
+                    booking_date="2026-03-01",
+                    amount=5773.0,
+                    currency="RON",
+                    direction="credit",
+                    raw_description="SALARIU",
+                    source_section="booked_transactions",
+                    txn_type="salary_income",
+                    confidence=1.0,
+                )
+            ]
+
+            feature_vector = {column: 0.0 for column in FEATURE_COLUMNS}
+            feature_vector["Essential_Needs_Percentage"] = 64.15994811069073
+
+            class _DoubleScaler:
+                n_features_in_ = 7
+
+                def transform(self, rows):
+                    return [[float(value) * 2.0 for value in row] for row in rows]
+
+            class _FixedModel:
+                def predict(self, rows):
+                    return [[0.77, 0.23] for _ in rows]
+
+            fake_scaling_context = {
+                "artifacts_dir": temp_dir,
+                "scaler": _DoubleScaler(),
+                "feature_columns": list(FINAL_DATASET_COLUMNS),
+                "thresholds": {},
+                "bank_mapping_rules": {},
+                "model_metadata": {
+                    "input_dim": len(FINAL_DATASET_COLUMNS),
+                    "scaled_feature_columns": list(FINAL_DATASET_COLUMNS[:7]),
+                    "scaler_mode": "selected_columns",
+                },
+            }
+            fake_artifacts = SimpleNamespace(
+                model=_FixedModel(),
+                scaler=_DoubleScaler(),
+                feature_columns=list(FINAL_DATASET_COLUMNS),
+                thresholds={},
+                bank_mapping_rules={},
+                model_metadata={
+                    "input_dim": len(FINAL_DATASET_COLUMNS),
+                    "scaled_feature_columns": list(FINAL_DATASET_COLUMNS[:7]),
+                    "scaler_mode": "selected_columns",
+                },
+            )
+
+            with patch("src.pipelines.run_end_to_end.parse_statement", return_value=parsed):
+                with patch(
+                    "src.pipelines.run_end_to_end.classify_parsed_transactions",
+                    return_value=(classified, {"valid_rate": 1.0}),
+                ):
+                    with patch(
+                        "src.pipelines.run_end_to_end.build_features",
+                        return_value=feature_vector,
+                    ):
+                        with patch(
+                            "src.inference.model_artifact_loader.ModelArtifactLoader.load_scaling_context",
+                            return_value=fake_scaling_context,
+                        ):
+                            with patch(
+                                "src.inference.model_artifact_loader.ModelArtifactLoader.load",
+                                return_value=fake_artifacts,
+                            ):
+                                result = run_end_to_end(
+                                    pdf_path=pdf_path,
+                                    export_dir=temp_dir,
+                                    cache_repo=InMemoryCacheRepository(),
+                                    profile_answers={
+                                        "Age": 30.0,
+                                        "Gender_Male": 1.0,
+                                        "Income_Category": 9999.0,
+                                        "Product_Lifetime_Clothing": 12.0,
+                                        "Product_Lifetime_Tech": 24.0,
+                                        "Product_Lifetime_Appliances": 48.0,
+                                        "Product_Lifetime_Cars": 120.0,
+                                    },
+                                    artifacts_dir="",
+                                )
+
+            with open(result.final_dataset_csv_path, encoding="utf-8", newline="") as handle:
+                row = next(csv.DictReader(handle))
+
+            self.assertEqual(row["Age"], "60.0")
+            self.assertEqual(row["Income_Category"], "11546.0")
+            self.assertAlmostEqual(float(row["Essential_Needs_Percentage"]), 128.31989622138146)
+            self.assertEqual(row["Product_Lifetime_Clothing"], "24.0")
+            self.assertEqual(row["Product_Lifetime_Tech"], "48.0")
+            self.assertEqual(row["Product_Lifetime_Appliances"], "96.0")
+            self.assertEqual(row["Product_Lifetime_Cars"], "240.0")
+            self.assertEqual(row["Gender_Male"], "1")
+            self.assertEqual(row["Risk_Score"], "0.77")
 
     def test_batch_run_deduplicates_mirrored_transfer_between_accounts(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -416,19 +535,26 @@ class RunEndToEndReportTests(unittest.TestCase):
                     "src.pipelines.run_end_to_end.classify_parsed_transactions",
                     return_value=(classified, {"total": 1.0, "valid": 1.0}),
                 ):
-                    result = run_end_to_end_many(
-                        pdf_paths=[pdf_path],
-                        export_dir=temp_dir,
-                        cache_repo=InMemoryCacheRepository(),
-                        profile_answers={"Income_Category": 1.0, "Gender_Male": 1.0},
-                    )
+                    with patch(
+                        "src.pipelines.run_end_to_end._build_export_scaler",
+                        return_value=(
+                            list(MODEL_SCALED_FEATURE_COLUMNS),
+                            self._ScaleByTwoPredictor(),
+                        ),
+                    ):
+                        result = run_end_to_end_many(
+                            pdf_paths=[pdf_path],
+                            export_dir=temp_dir,
+                            cache_repo=InMemoryCacheRepository(),
+                            profile_answers={"Income_Category": 1.0, "Gender_Male": 1.0},
+                        )
 
             with open(result.final_dataset_csv_path, encoding="utf-8", newline="") as handle:
                 rows = list(csv.DictReader(handle))
 
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["statement_month"], "2026-02")
-            self.assertEqual(float(rows[0]["Income_Category"]), 5773.0)
+            self.assertEqual(float(rows[0]["Income_Category"]), 11546.0)
             self.assertEqual(float(rows[0]["Gender_Male"]), 1.0)
 
 

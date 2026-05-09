@@ -20,6 +20,14 @@ REQUIRED_ARTIFACT_FILES = (
     "bank_mapping_rules.yaml",
 )
 
+SCALING_ARTIFACT_FILES = (
+    "scaler.pkl",
+    "feature_columns.json",
+    "thresholds.json",
+    "model_metadata.json",
+    "bank_mapping_rules.yaml",
+)
+
 
 @dataclass(frozen=True)
 class ModelArtifacts:
@@ -118,6 +126,32 @@ class ModelArtifactLoader:
             model_metadata=model_metadata,
             bank_mapping_rules=bank_mapping_rules,
         )
+
+    def load_scaling_context(self) -> Dict[str, object]:
+        missing = [
+            filename
+            for filename in SCALING_ARTIFACT_FILES
+            if not os.path.exists(os.path.join(self._artifacts_dir, filename))
+        ]
+        if missing:
+            raise FileNotFoundError(f"Missing model artifacts required for export scaling: {missing}")
+
+        paths = self.required_paths()
+
+        feature_columns = self._read_json_list(paths["feature_columns.json"])
+        thresholds = self._read_json_dict(paths["thresholds.json"])
+        model_metadata = self._read_json_dict(paths["model_metadata.json"])
+        bank_mapping_rules = self._read_yaml_dict(paths["bank_mapping_rules.yaml"])
+        scaler = self._read_pickle(paths["scaler.pkl"])
+
+        return {
+            "artifacts_dir": self._artifacts_dir,
+            "scaler": scaler,
+            "feature_columns": feature_columns,
+            "thresholds": thresholds,
+            "model_metadata": model_metadata,
+            "bank_mapping_rules": bank_mapping_rules,
+        }
 
     @staticmethod
     def _read_json_dict(path: str) -> Dict[str, object]:

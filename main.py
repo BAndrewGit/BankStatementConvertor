@@ -6,6 +6,7 @@ from tkinter import Tk, filedialog, messagebox
 
 from dotenv import load_dotenv
 
+from src.inference.artifact_paths import get_default_artifacts_dir
 from src.pipelines.run_end_to_end import run_end_to_end, run_end_to_end_many
 from src.ui import launch_desktop_app
 
@@ -73,10 +74,12 @@ def main() -> int:
             print("Procesare anulata: nu ai selectat folderul de export.")
             return 1
 
+        artifacts_dir = get_default_artifacts_dir()
+
         if len(pdf_paths) == 1:
-            result = run_end_to_end(pdf_path=pdf_paths[0], export_dir=output_dir)
+            result = run_end_to_end(pdf_path=pdf_paths[0], export_dir=output_dir, artifacts_dir=artifacts_dir)
         else:
-            result = run_end_to_end_many(pdf_paths=list(pdf_paths), export_dir=output_dir)
+            result = run_end_to_end_many(pdf_paths=list(pdf_paths), export_dir=output_dir, artifacts_dir=artifacts_dir)
         print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
         show_success_dialog = os.getenv("APP_SHOW_SUCCESS_DIALOG", "0") == "1"
         if show_success_dialog:

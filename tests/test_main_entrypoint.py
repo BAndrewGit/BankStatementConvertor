@@ -31,7 +31,11 @@ class MainEntrypointTests(unittest.TestCase):
                                 exit_code = main.main()
 
         self.assertEqual(exit_code, 0)
-        mocked_run.assert_called_once_with(pdf_path=r"C:\in\statement.pdf", export_dir=r"C:\out")
+        mocked_run.assert_called_once_with(
+            pdf_path=r"C:\in\statement.pdf",
+            export_dir=r"C:\out",
+            artifacts_dir=main.get_default_artifacts_dir(),
+        )
         mocked_run_many.assert_not_called()
         mocked_info.assert_not_called()
         root.withdraw.assert_called_once()
@@ -61,6 +65,7 @@ class MainEntrypointTests(unittest.TestCase):
         mocked_run_many.assert_called_once_with(
             pdf_paths=[r"C:\in\statement_1.pdf", r"C:\in\statement_2.pdf"],
             export_dir=r"C:\out",
+            artifacts_dir=main.get_default_artifacts_dir(),
         )
         mocked_info.assert_not_called()
         root.withdraw.assert_called_once()

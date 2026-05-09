@@ -115,6 +115,7 @@ PROFILE_ORDINAL_FEATURES: Dict[str, str] = dict(ORDINAL_CHOICE_FEATURES)
 
 OPTIONAL_GROUP_FEATURES: Dict[str, set[str]] = {
     "Savings goals": {"Savings_Goal_Emergency_Fund"},
+    "Savings obstacles": {"Savings_Obstacle_Insufficient_Income"},
 }
 
 
